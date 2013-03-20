@@ -17,8 +17,12 @@
 #include <memory>
 
 using namespace clang;
+#if LLVM_USE_RVALUE_REFERENCES
 using std::move;
 using std::unique_ptr;
+#else
+#pragma error("Nooooo! No rvalue references.")
+#endif
 
 namespace {
 
