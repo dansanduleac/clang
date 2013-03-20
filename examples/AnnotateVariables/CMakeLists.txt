@@ -5,7 +5,7 @@ set( LLVM_LINK_COMPONENTS support mc)
 
 project(AnnotateVariables)
 
-add_clang_library(${PROJECT_NAME} AnnotateVariables.cpp RewriterUtils.cpp)
+add_clang_library(${PROJECT_NAME} AnnotateVariables.cpp ClangUtils.cpp)
 
 # We're going to be using lib/Sema/TreeTransform.h so let's
 # add clang/lib to the includes.

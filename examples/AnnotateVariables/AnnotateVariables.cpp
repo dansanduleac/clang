@@ -9,7 +9,7 @@
 // This is in "${CLANG_SOURCE_DIR}/lib", mind you.
 #include "Sema/TreeTransform.h"
 
-#include "RewriterUtils.h"
+#include "ClangUtils.h"
 
 #include "llvm/Support/raw_ostream.h"
 
