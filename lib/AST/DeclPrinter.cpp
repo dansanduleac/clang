@@ -669,6 +669,8 @@ void DeclPrinter::VisitVarDecl(VarDecl *D) {
   if (ParmVarDecl *Parm = dyn_cast<ParmVarDecl>(D))
     T = Parm->getOriginalType();
   T.print(Out, Policy, D->getName());
+  // Attributes of this Decl should be printed before the initializer.
+  prettyPrintAttributes(D);
   Expr *Init = D->getInit();
   if (!Policy.SuppressInitializers && Init) {
     bool ImplicitInit = false;
@@ -691,7 +693,6 @@ void DeclPrinter::VisitVarDecl(VarDecl *D) {
         Out << ")";
     }
   }
-  prettyPrintAttributes(D);
 }
 
 void DeclPrinter::VisitParmVarDecl(ParmVarDecl *D) {
