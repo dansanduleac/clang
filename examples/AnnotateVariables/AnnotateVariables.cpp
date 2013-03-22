@@ -189,14 +189,13 @@ private:
     // Rewrite the source code.
 
     // Obtain the replacement string, Str (by printPretty'ing the Stmt).
-    std::string SStr;
-    llvm::raw_string_ostream S(SStr);
-    DS->printPretty(S, 0, PrintingPolicy(Context->getLangOpts()));
-    const std::string &Str = S.str();
+    std::string Str = Rewriter->ConvertToString(DS);
     if (DEBUG) {
       llvm::errs() << red << "Rewriting DeclStmt: " << normal << Str << "\n";
       warnAt(DS, " <--- old DeclStmt");
     }
+
+    // TODO just rewrite the Decl... not the entire Stmt
 
     SourceManager& SM = Context->getSourceManager();
     SourceLocation SLoc, ELoc;
@@ -208,12 +207,19 @@ private:
     // where expansion occurred (which will be in the source code).
     SLoc = SM.getExpansionLoc(DS->getStartLoc());
     ELoc = SM.getExpansionLoc(DS->getEndLoc());
+
+    //diagnosticAt(CharSourceRange::getTokenRange(SourceRange(SLoc, ELoc)),
+    //  DiagnosticsEngine::Warning, "ExpandedLocation");
     int Size = Rewriter->getRangeSize(SourceRange(SLoc, ELoc));
     /*
     llvm::errs() << "Rewriter->isRewritable(...) == "
                  << Rewriter->isRewritable(SLoc) << "\n";
     llvm::errs() << "Size = " << Size << "\n";
     */
+
+    // TOTO this is a problem if further down we rewrite the initialiser 
+    // contained in this DeclExpr as well... 
+    // How does it figure out the new position of the initialiser btw....
     Rewriter->ReplaceText(SLoc, Size, Str);
   }
 
@@ -365,6 +371,8 @@ public:
   // TODO 
   // Maybe not necessary to do this here. Should use such a function within
   // StmtDREExtractor?
+  
+  /*
   bool VisitDeclRefExpr(DeclRefExpr* dre) {
     auto &e = llvm::errs();
     NamedDecl* orig = dre->getFoundDecl();
@@ -388,17 +396,17 @@ public:
     }
 
     return true;
-    /*
-    DeclContext* dc = VD->getDeclContext();
-    DeclContextLookupResult lr = dc->lookup(VD->getDeclName());
-    e << "Looked up this decl at: " << "\n";
-    for (auto I = lr.first, E = lr.second; I != E; ++I) {
-      NamedDecl* nd = *I;
-      e << printLoc(nd) << "\n";
-    }
-    e << "\n";
-     */
+    
+    // DeclContext* dc = VD->getDeclContext();
+    // DeclContextLookupResult lr = dc->lookup(VD->getDeclName());
+    // e << "Looked up this decl at: " << "\n";
+    // for (auto I = lr.first, E = lr.second; I != E; ++I) {
+    //   NamedDecl* nd = *I;
+    //   e << printLoc(nd) << "\n";
+    // }
+    // e << "\n"; 
   }
+  */
 
   class ReferencingExprExtractor {
 
@@ -502,24 +510,25 @@ public:
 
       if (DEBUG) {
         llvm::errs() << magenta << "Wrapped Text: " << normal;
-        //wrapper->dump();
         // Get the new text.
-          //bo->dumpPretty(*Context);
         llvm::errs() << Rewriter->ConvertToString(bo);
         llvm::errs() << "\n";
         warnAt(bo, "operator=");
         llvm::errs() << magenta << "Wrapper: " << normal;
-          //wrapper->dumpPretty(*Context);
         llvm::errs() << Rewriter->ConvertToString(wrapper);
         llvm::errs() << "\n";
 
         llvm::errs() << red << "Actually replacing:\n" << normal;
-        int Size = Rewriter->getRangeSize(bo->getSourceRange());
+        int Size = Rewriter->getRangeSize(
+          CharSourceRange::getTokenRange(bo->getSourceRange()));
+        /*
         diagnosticAt(CharSourceRange::getCharRange(
                         bo->getLocStart(),
                         bo->getLocStart().getLocWithOffset(Size)),
                      DiagnosticsEngine::Warning,
                      "<--- this");
+        */
+        warnAt(bo, "<--- this");
       }
       // Use Rewriter::ReplaceStmt to replace this with an AttributedStmt.
       Rewriter->ReplaceStmt(bo, wrapper);      
