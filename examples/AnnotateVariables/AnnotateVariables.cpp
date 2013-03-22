@@ -5,6 +5,7 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Rewrite/Rewriter.h"
+#include "clang/Sema/SemaConsumer.h"
 // This is in "${CLANG_SOURCE_DIR}/lib", mind you.
 #include "Sema/TreeTransform.h"
 
@@ -61,7 +62,9 @@ static const Color savedColor = raw_ostream::SAVEDCOLOR;
 class MyTreeTransform
   : public TreeTransform<MyTreeTransform> {
 public:
+  MyTreeTransform(Sema& S) : TreeTransform<MyTreeTransform>(S) {}
 
+  // DO SOMETHING
 };
 
 
@@ -565,12 +568,21 @@ private:
   Rewriter* Rewriter;
 };
 
-class AnnotateVariablesConsumer : public ASTConsumer {
+class AnnotateVariablesConsumer : public SemaConsumer {
 public:
+  // TODO: change rewriter to be a OwningPtr<Rewriter>
   explicit AnnotateVariablesConsumer(ASTContext* Context,
-      Sema& SemaRef, unique_ptr<Rewriter>&& rewriter)
-    : Rewriter(move(rewriter)), SemaRef(SemaRef),
-      Visitor(Context, SemaRef, Rewriter.get()) {}
+      unique_ptr<Rewriter>&& rewriter)
+    : Rewriter(move(rewriter)), Visitor(Context, *SemaPtr, Rewriter.get()),
+      Transform(*SemaPtr) {}
+
+  void InitializeSema(Sema &S) {
+    SemaPtr = &S;
+  }
+
+  void ForgetSema() {
+    SemaPtr = 0;
+  }
 
   virtual void HandleTranslationUnit(clang::ASTContext &Context) {
     // Traversing the translation unit decl via a RecursiveASTVisitor
@@ -586,9 +598,10 @@ public:
   }
 private:
   unique_ptr<Rewriter> Rewriter;
-  Sema& SemaRef;
+  Sema* SemaPtr;
   // A RecursiveASTVisitor implementation.
   AnnotateVariablesVisitor Visitor;
+  MyTreeTransform Transform;
 
   /*
   virtual bool HandleTopLevelDecl(DeclGroupRef DG) {
@@ -609,10 +622,7 @@ protected:
   ASTConsumer *CreateASTConsumer(CompilerInstance &CI, llvm::StringRef) {
     auto Rew = unique_ptr<Rewriter>(new Rewriter());
     Rew->setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
-    // CI.hasSema() == 0 :(
-    Sema* no_sema = 0;
-    return new AnnotateVariablesConsumer(&CI.getASTContext(),
-      *no_sema, move(Rew));
+    return new AnnotateVariablesConsumer(&CI.getASTContext(), move(Rew));
   }
 
   bool ParseArgs(const CompilerInstance &CI,
