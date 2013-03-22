@@ -11,6 +11,7 @@
 
 #include "ClangUtils.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -156,6 +157,11 @@ private:
   // If such an annotated variable is passed to an un-annotated, or differently
   // annotated function, a warning will be issued.
   int uid = 1;
+
+  // Cache for our unpacked attribute data, in this case the getAnnotation() split
+  // by the separator.
+  // TODO need  define DenseMapInfo for AssertionAttr*
+  llvm::DenseMap<AssertionAttr*, llvm::SmallVector<StringRef,4>> annotations;
 
   // Extract the valid AssertionAttr, if any.
 
