@@ -58,13 +58,30 @@ static const Color savedColor = raw_ostream::SAVEDCOLOR;
 // TODO when we figure out how to get ahold of the Sema before it gets
 // reset by CompilerInstance (PluginASTAction == too late already).
 // If I remember correctly, derive ASTFrontendAction and save the Sema.
+// But apparently we can still use a PluginASTAction, and create a 
+// SemaConsumer instead of a plain ASTConsumer (and it works!).
 
-class MyTreeTransform
-  : public TreeTransform<MyTreeTransform> {
+class MyTreeTransform : public TreeTransform<MyTreeTransform> {
+  typedef TreeTransform<MyTreeTransform> BaseTransform;
+
+  SemaConsumer& Consumer;
+
 public:
-  MyTreeTransform(Sema& S) : TreeTransform<MyTreeTransform>(S) {}
+  MyTreeTransform(SemaConsumer& Consumer, Sema& S)
+    : BaseTransform(S), Consumer(Consumer) { }
 
-  // DO SOMETHING
+  // TODO needed? Do we actually need to?
+  // Make sure we redo semantic analysis
+    bool AlwaysRebuild() { return true; }
+
+  /// \brief Transform the attributes associated with the given declaration and 
+  /// place them on the new declaration.
+  ///
+  /// By default, this operation does nothing. Subclasses may override this
+  /// behavior to transform attributes.
+  void transformAttrs(Decl *Old, Decl *New) {
+
+  }
 };
 
 
@@ -584,7 +601,7 @@ public:
       unique_ptr<class Rewriter>&& rewriter)
     : SemaConsumer(), Rewriter(move(rewriter)),
       Visitor(*this, Context, *SemaPtr, Rewriter.get()),
-      Transform(*SemaPtr) {}
+      Transform(*this, *SemaPtr) {}
 
   void InitializeSema(Sema &S) {
     SemaPtr = &S;
