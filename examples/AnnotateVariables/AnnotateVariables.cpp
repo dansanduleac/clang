@@ -55,58 +55,19 @@ static const Color magenta = raw_ostream::MAGENTA;
 static const Color yellow = raw_ostream::YELLOW;
 static const Color savedColor = raw_ostream::SAVEDCOLOR;
 
-// TODO when we figure out how to get ahold of the Sema before it gets
-// reset by CompilerInstance (PluginASTAction == too late already).
-// If I remember correctly, derive ASTFrontendAction and save the Sema.
-// But apparently we can still use a PluginASTAction, and create a 
-// SemaConsumer instead of a plain ASTConsumer (and it works!).
-
-class MyTreeTransform : public TreeTransform<MyTreeTransform> {
-  typedef TreeTransform<MyTreeTransform> BaseTransform;
-
-  SemaConsumer& Consumer;
-
-public:
-  MyTreeTransform(SemaConsumer& Consumer, Sema& S)
-    : BaseTransform(S), Consumer(Consumer) { }
-
-  // TODO needed? Do we actually need to?
-  // Make sure we redo semantic analysis
-    bool AlwaysRebuild() { return true; }
-
-  /// \brief Transform the attributes associated with the given declaration and 
-  /// place them on the new declaration.
-  ///
-  /// By default, this operation does nothing. Subclasses may override this
-  /// behavior to transform attributes.
-  void transformAttrs(Decl *Old, Decl *New) {
-
-  }
-};
-
-
-
 
 const llvm::StringRef GLOBAL_PREFIX = "assertion";
 
-
-class AnnotateVariablesVisitor
-  : public RecursiveASTVisitor<AnnotateVariablesVisitor> {
-  ASTConsumer& Consumer;
+class Common {
   ASTContext* Context;
-  // FIXME Are we using this Sema?
-  Sema& SemaRef;
   Rewriter* Rewriter;
 
 public:
-  explicit AnnotateVariablesVisitor(ASTConsumer& Consumer,
-      ASTContext* Context, Sema& SemaRef, class Rewriter* Rewriter)
-    : Consumer(Consumer), Context(Context), SemaRef(SemaRef),
-      Rewriter(Rewriter) {}
+  Common(ASTContext* C, class Rewriter* Rewriter)
+    : Context(C), Rewriter(Rewriter) { }
 
-  // Convenience stuff, only needs Context.
-  // --------------------------------------
-  // TODO: move out of this class
+  // Convenience functions for debugging and diagnostics.
+  // ----------------------------------------------------
 
   template <typename T>
   std::string printLoc(T* D) {
@@ -173,7 +134,6 @@ public:
     Qualified
   };
 
-private:
   // There will be a different Visitor for each translation unit, but we do
   // not need globally unique UIDs. Each translation unit can have its own set
   // of UIDs, but the programmer will have to be consistent with assertion
@@ -277,8 +237,54 @@ private:
       llvm::errs() << yellow << "Qualified: " << normal <<  S.str() << "\n";
     }
   }
+};
+
+// TODO when we figure out how to get ahold of the Sema before it gets
+// reset by CompilerInstance (PluginASTAction == too late already).
+// If I remember correctly, derive ASTFrontendAction and save the Sema.
+// But apparently we can still use a PluginASTAction, and create a 
+// SemaConsumer instead of a plain ASTConsumer (and it works!).
+
+class MyTreeTransform : public TreeTransform<MyTreeTransform> {
+  typedef TreeTransform<MyTreeTransform> BaseTransform;
+
+  Common& Co;
 
 public:
+  MyTreeTransform(Common& Common, Sema& S)
+    : BaseTransform(S), Co(Common) { }
+
+  // TODO needed? Do we actually need to?
+  // Make sure we redo semantic analysis
+    bool AlwaysRebuild() { return true; }
+
+  /// \brief Transform the attributes associated with the given declaration and 
+  /// place them on the new declaration.
+  ///
+  /// By default, this operation does nothing. Subclasses may override this
+  /// behavior to transform attributes.
+  void transformAttrs(Decl *Old, Decl *New) {
+
+  }
+};
+
+
+
+class AnnotateVariablesVisitor
+  : public RecursiveASTVisitor<AnnotateVariablesVisitor> {
+  Common& Co;
+  ASTContext* Context;
+  // FIXME Are we using this Sema?
+  Sema& SemaRef;
+  Rewriter* Rewriter;
+  typedef Common::AssertionAttr AssertionAttr;
+
+public:
+  explicit AnnotateVariablesVisitor(Common& Common,
+      ASTContext* Context, Sema& SemaRef, class Rewriter* Rewriter)
+    : Co(Common), Context(Context), SemaRef(SemaRef),
+      Rewriter(Rewriter) {}
+
   // VISITORS
   // -------------------------------------------------
 
@@ -302,18 +308,18 @@ public:
       if (DEBUG) {
         //(e.changeColor(yellow, true) << "VarDecl").resetColor()
         e << yellow << "VarDecl" << normal
-          << " at " << printLoc(VD) << ": \""
+          << " at " << Co.printLoc(VD) << ": \""
           << VD->getName() << "\" [ ";
         VD->dump();
         e << " ]\n";
       }
       
-      AssertionAttr* attr = getAssertionAttr(VD);
+      AssertionAttr* attr = Co.getAssertionAttr(VD);
 
       if (attr) {
         // Assign a unique ID.
         // Pass DS so that the Rewriter has something to replace.
-        QualifyAttr(DS, VD, attr);
+        Co.QualifyAttr(DS, VD, attr);
       }
       // Deal with initialisation ("assertion stealing").
       // Conditions:
@@ -325,7 +331,7 @@ public:
       //     TODO move logic for (2) in a separate function / class that
       //     somewhat emulates StmtVisitor.
       if (Expr* Init = VD->getInit()) {
-        ExprDREExtractor extractor(*Context, *this, Init);
+        ExprDREExtractor extractor(*Context, Co, Init);
         extractor.run();
 
         if (extractor.found()) {
@@ -333,14 +339,14 @@ public:
           // but we already have an AssertionAttr on our back.
           // This behaviour might change in the future.
           if (attr) {
-            diagnosticAt(attr, DiagnosticsEngine::Error,
+            Co.diagnosticAt(attr, DiagnosticsEngine::Error,
               "This VarDecl's initialisation points to another asserted "
               " variable, but it already carries the shown assertion.");
           }
           attr = extractor.attr;
           // TODO We have to take other things into account like indirection,
           // other info...
-          AddAssertionAttr(DS, VD, attr);
+          Co.AddAssertionAttr(DS, VD, attr);
         }
       }
     }
@@ -441,15 +447,15 @@ public:
   // Use this to extract any DeclRefExpr from lvalues that we assign to
   //   (or that we pass to functions).
   class ExprDREExtractor : public EvaluatedExprVisitor<ExprDREExtractor> {
-    AnnotateVariablesVisitor& Visitor;
+    Common& Co;
     Expr* toVisit;
   public:
-    // We need Visitor ref to use warnAt, or any other stuff that depends
+    // We need Common ref to use warnAt, or any other stuff that depends
     // on the ASTContext..
-    ExprDREExtractor(ASTContext& C, AnnotateVariablesVisitor& Visitor,
+    ExprDREExtractor(ASTContext& C, Common& Common,
                      Expr* toVisit)
       : EvaluatedExprVisitor<ExprDREExtractor>(C),
-        Visitor(Visitor),
+        Co(Common),
         toVisit(toVisit) {}
     // For pointers, should only work if the pointer is const,
     // so, in regex terms, "T (\*const)*".
@@ -471,8 +477,8 @@ public:
 
     void VisitDeclRefExpr(DeclRefExpr* DRE) {
       NamedDecl* orig = DRE->getFoundDecl();
-      //Visitor.warnAt(orig, "DRE referenced this object");
-      if ((attr = Visitor.getAssertionAttr(orig))) {
+      //Co.warnAt(orig, "DRE referenced this object");
+      if ((attr = Co.getAssertionAttr(orig))) {
         if (dre != NULL) {
           success = false;
           return;
@@ -483,14 +489,14 @@ public:
         std::string S; llvm::raw_string_ostream os(S);
         clang::QualType tt = DRE->getType();
         os << "DRE->getType() == " << tt.getAsString();
-        Visitor.warnAt(DRE, os.str());
+        Co.warnAt(DRE, os.str());
       }
     }
 
     void run() {
       Visit(toVisit);
       if (!success) {
-        Visitor.
+        Co.
         diagnosticAt(toVisit, DiagnosticsEngine::Fatal,
                      "Found more than 1 DRE inside this Expr");
       }
@@ -513,7 +519,7 @@ public:
       // Possibly: use ClangUtils.h, getStmtRangeWithSemicolon,
       // if we want a sourceRange including semicolon.
 
-      ExprDREExtractor extractor(*Context, *this, lhs);
+      ExprDREExtractor extractor(*Context, Co, lhs);
       // why does VisitStmt sometimes not find the DRE....
       extractor.run();
       
@@ -539,7 +545,7 @@ public:
         // Get the new text.
         llvm::errs() << Rewriter->ConvertToString(bo);
         llvm::errs() << "\n";
-        warnAt(bo, "operator=");
+        Co.warnAt(bo, "operator=");
         llvm::errs() << magenta << "Wrapper: " << normal;
         llvm::errs() << Rewriter->ConvertToString(wrapper);
         llvm::errs() << "\n";
@@ -554,7 +560,7 @@ public:
                      DiagnosticsEngine::Warning,
                      "<--- this");
         */
-        warnAt(bo, "<--- this");
+        Co.warnAt(bo, "<--- this");
       }
       // Use Rewriter::ReplaceStmt to replace this with an AttributedStmt.
       Rewriter->ReplaceStmt(bo, wrapper);      
@@ -591,6 +597,7 @@ private:
 class AnnotateVariablesConsumer : public SemaConsumer {
   ASTContext* Context;
   unique_ptr<Rewriter> Rewriter;
+  Common Co;
   Sema* SemaPtr;
   // A RecursiveASTVisitor implementation.
   AnnotateVariablesVisitor Visitor;
@@ -601,8 +608,9 @@ public:
   explicit AnnotateVariablesConsumer(ASTContext* Context,
       unique_ptr<class Rewriter>&& rewriter)
     : SemaConsumer(), Context(Context), Rewriter(move(rewriter)),
-      Visitor(*this, Context, *SemaPtr, Rewriter.get()),
-      Transform(*this, *SemaPtr) {}
+      Co(Context, Rewriter.get()),
+      Visitor(Co, Context, *SemaPtr, Rewriter.get()),
+      Transform(Co, *SemaPtr) {}
 
   void InitializeSema(Sema &S) {
     SemaPtr = &S;
@@ -637,8 +645,6 @@ public:
     return true;
   }
   */
-
-  
 };
 
 class AnnotateVariablesAction : public PluginASTAction {
