@@ -1,10 +1,9 @@
-#include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/AST/AST.h"
 #include "clang/Frontend/CompilerInstance.h"
-
+#include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Rewrite/Rewriter.h"
 // This is in "${CLANG_SOURCE_DIR}/lib", mind you.
 #include "Sema/TreeTransform.h"
