@@ -75,11 +75,17 @@ const llvm::StringRef GLOBAL_PREFIX = "assertion";
 
 class AnnotateVariablesVisitor
   : public RecursiveASTVisitor<AnnotateVariablesVisitor> {
+  ASTConsumer& Consumer;
+  ASTContext* Context;
+  // FIXME Are we using this Sema?
+  Sema& SemaRef;
+  Rewriter* Rewriter;
 
 public:
-  explicit AnnotateVariablesVisitor(ASTContext* Context, Sema& SemaRef,
-      Rewriter* Rewriter)
-    : Context(Context), SemaRef(SemaRef), Rewriter(Rewriter) {}
+  explicit AnnotateVariablesVisitor(ASTConsumer& Consumer,
+      ASTContext* Context, Sema& SemaRef, class Rewriter* Rewriter)
+    : Consumer(Consumer), Context(Context), SemaRef(SemaRef),
+      Rewriter(Rewriter) {}
 
   // Convenience stuff, only needs Context.
   // --------------------------------------
@@ -562,18 +568,22 @@ public:
   }
 
 private:
-  ASTContext* Context;
-  // FIXME Are we using this Sema?
-  Sema& SemaRef;
-  Rewriter* Rewriter;
+  
 };
 
 class AnnotateVariablesConsumer : public SemaConsumer {
+  unique_ptr<Rewriter> Rewriter;
+  Sema* SemaPtr;
+  // A RecursiveASTVisitor implementation.
+  AnnotateVariablesVisitor Visitor;
+  MyTreeTransform Transform;
+
 public:
   // TODO: change rewriter to be a OwningPtr<Rewriter>
   explicit AnnotateVariablesConsumer(ASTContext* Context,
-      unique_ptr<Rewriter>&& rewriter)
-    : Rewriter(move(rewriter)), Visitor(Context, *SemaPtr, Rewriter.get()),
+      unique_ptr<class Rewriter>&& rewriter)
+    : SemaConsumer(), Rewriter(move(rewriter)),
+      Visitor(*this, Context, *SemaPtr, Rewriter.get()),
       Transform(*SemaPtr) {}
 
   void InitializeSema(Sema &S) {
@@ -588,6 +598,7 @@ public:
     // Traversing the translation unit decl via a RecursiveASTVisitor
     // will visit all nodes in the AST.
     Visitor.TraverseDecl(Context.getTranslationUnitDecl());
+    //Transform.TransformDecl(Context.getTranslationUnitDecl());
 
     // Print out the rewritten contents.
     const RewriteBuffer *RewriteBuf =
@@ -596,12 +607,6 @@ public:
 
     //Rewriter->overwriteChangedFiles();
   }
-private:
-  unique_ptr<Rewriter> Rewriter;
-  Sema* SemaPtr;
-  // A RecursiveASTVisitor implementation.
-  AnnotateVariablesVisitor Visitor;
-  MyTreeTransform Transform;
 
   /*
   virtual bool HandleTopLevelDecl(DeclGroupRef DG) {
