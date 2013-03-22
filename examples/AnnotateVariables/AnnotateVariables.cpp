@@ -589,6 +589,7 @@ private:
 };
 
 class AnnotateVariablesConsumer : public SemaConsumer {
+  ASTContext* Context;
   unique_ptr<Rewriter> Rewriter;
   Sema* SemaPtr;
   // A RecursiveASTVisitor implementation.
@@ -599,7 +600,7 @@ public:
   // TODO: change rewriter to be a OwningPtr<Rewriter>
   explicit AnnotateVariablesConsumer(ASTContext* Context,
       unique_ptr<class Rewriter>&& rewriter)
-    : SemaConsumer(), Rewriter(move(rewriter)),
+    : SemaConsumer(), Context(Context), Rewriter(move(rewriter)),
       Visitor(*this, Context, *SemaPtr, Rewriter.get()),
       Transform(*this, *SemaPtr) {}
 
@@ -636,6 +637,8 @@ public:
     return true;
   }
   */
+
+  
 };
 
 class AnnotateVariablesAction : public PluginASTAction {
