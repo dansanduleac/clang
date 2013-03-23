@@ -66,6 +66,8 @@ public:
   Common(ASTContext* C, class Rewriter* Rewriter)
     : Context(C), Rewriter(Rewriter) { }
 
+  ASTContext* getContext() { return Context; }
+
   // Convenience functions for debugging and diagnostics.
   // ----------------------------------------------------
 
@@ -212,10 +214,10 @@ public:
   // TODO change to use something more high-level than a string (as the new
   // value). DeclStmt used only for Rewriter to have a Stmt to replace
   // (otherwise we could have done this in VarDecl.
+  /*
   void ReplaceAssertionAttr(DeclStmt* DS, Decl* D, llvm::StringRef newS) {
     AssertionAttr* attr = D->getAttr<AssertionAttr>();
     assert(attr && "Tried to replace AssertionAttr for Decl which has none");
-    SourceRange range = attr->getRange();
     D->dropAttr<AssertionAttr>();
     // Using placement new. Why allocate another copy when we can reuse.
     // ASTContext will deallocate it at the end of things. 
@@ -223,19 +225,43 @@ public:
 
     AddAssertionAttr(DS, D, attr);
   }
+  */
 
-  // Adds UID to the attribute.
-  void QualifyAttr(DeclStmt* DS, Decl* D, AssertionAttr* attr) {
-    // TODO a map or smth to hold the "split" state of each Annotation.
-    // For now, append directly to the string.
+  // Adds UID to the attribute, by replacing the original attribute object.
+  void QualifyDeclInPlace(DeclStmt* DS, Decl* D, AssertionAttr* attr) {
+    assert(IsSaneAssertionAttr(attr) &&
+      "Tried to replace AssertionAttr for Decl which has none");
+    D->dropAttr<AssertionAttr>();
+    attr = QualifyAttrReplace(attr);
+    AddAssertionAttr(DS, D, attr);
+    if (DEBUG) {
+      llvm::errs() << yellow << "Qualified: " << normal 
+                   << attr->getAnnotation() << "\n";
+    }
+  }
+
+  // Just returns a string that represents the qualified AnnotateAttr.
+  // 
+  std::string GetQualifiedAttrString(AnnotateAttr* attr) {
     SmallString<20> an = attr->getAnnotation();
     an.append(",");
     llvm::raw_svector_ostream S(an);
     S << uid++;
-    ReplaceAssertionAttr(DS, D, S.str());
-    if (DEBUG) {
-      llvm::errs() << yellow << "Qualified: " << normal <<  S.str() << "\n";
-    }
+    return S.str();
+  }
+
+  // Qualifies an existing attr like QualifyAttr, but replaces the original
+  // attr.
+  AssertionAttr* QualifyAttrReplace(AssertionAttr* attr) {
+    return ::new(attr) AssertionAttr(attr->getRange(), *Context,
+                                     GetQualifiedAttrString(attr));
+  }
+
+  // Return a new AssertionAttr representing the qualified attr.
+  // Does NOT check whether attr already qualified, or not sane.
+  AssertionAttr* QualifyAttr(AssertionAttr* attr) {
+    return new(*Context) AnnotateAttr(attr->getRange(), *Context, 
+                                      GetQualifiedAttrString(attr));
   }
 };
 
@@ -319,7 +345,7 @@ public:
       if (attr) {
         // Assign a unique ID.
         // Pass DS so that the Rewriter has something to replace.
-        Co.QualifyAttr(DS, VD, attr);
+        Co.QualifyDeclInPlace(DS, VD, attr);
       }
       // Deal with initialisation ("assertion stealing").
       // Conditions:
