@@ -166,7 +166,8 @@ void MultiplexASTMutationListener::AddedObjCPropertyInClassExtension(
 
 
 MultiplexConsumer::MultiplexConsumer(ArrayRef<ASTConsumer*> C)
-    : Consumers(C.begin(), C.end()),
+    : SemaConsumer(CK_MultiplexConsumer),
+      Consumers(C.begin(), C.end()),
       MutationListener(0), DeserializationListener(0) {
   // Collect the mutation listeners and deserialization listeners of all
   // children, and create a multiplex listener each if so.

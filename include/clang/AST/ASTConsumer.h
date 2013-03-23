@@ -32,14 +32,22 @@ namespace clang {
 /// clients that read ASTs.  This abstraction layer allows the client to be
 /// independent of the AST producer (e.g. parser vs AST dump file reader, etc).
 class ASTConsumer {
-  /// \brief Whether this AST consumer also requires information about
-  /// semantic analysis.
-  bool SemaConsumer;
-
-  friend class SemaConsumer;
-
 public:
-  ASTConsumer() : SemaConsumer(false) { }
+  /// Used in deriving classes.
+  enum Kind {
+    CK_ASTConsumer,
+    /// \brief Whether this AST consumer also requires information about
+    /// semantic analysis.
+    CK_SemaConsumer,
+    CK_MultiplexConsumer,
+    CK_LastSemaConsumer
+  };
+private:
+  const Kind CK;
+public:
+  Kind getKind() const { return CK; }
+
+  ASTConsumer(Kind K = CK_ASTConsumer) : CK(K) { }
 
   virtual ~ASTConsumer() {}
 

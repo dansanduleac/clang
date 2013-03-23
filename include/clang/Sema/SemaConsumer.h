@@ -26,9 +26,7 @@ namespace clang {
   class SemaConsumer : public ASTConsumer {
     virtual void anchor();
   public:
-    SemaConsumer() {
-      ASTConsumer::SemaConsumer = true;
-    }
+    SemaConsumer(Kind K = CK_SemaConsumer) : ASTConsumer(K) { }
 
     /// \brief Initialize the semantic consumer with the Sema instance
     /// being used to perform semantic analysis on the abstract syntax
@@ -40,7 +38,8 @@ namespace clang {
 
     // isa/cast/dyn_cast support
     static bool classof(const ASTConsumer *Consumer) {
-      return Consumer->SemaConsumer;
+      return Consumer->getKind() >= CK_SemaConsumer &&
+             Consumer->getKind() <= CK_LastSemaConsumer;
     }
   };
 }
