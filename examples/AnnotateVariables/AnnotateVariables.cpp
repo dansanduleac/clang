@@ -677,11 +677,16 @@ public:
     // Traversing the translation unit decl via a RecursiveASTVisitor
     // will visit all nodes in the AST.
     Visitor.TraverseDecl(Context.getTranslationUnitDecl());
-    //Transform.TransformDecl(Context.getTranslationUnitDecl());
+
+    if (Context.getDiagnostics().hasErrorOccurred()) {
+      // Destroy the AST somehow?
+      // Look at ParseAST.cpp - ParseAST(...)
+      // Actually no need.. ParseAST doesn't do that either, it just carries
+      // on..
+    }
 
     // Print out the rewritten contents.
 
-    // TODO temporarily disabled.
     // const RewriteBuffer *RewriteBuf =
     //     Rewriter->getRewriteBufferFor(Context.getSourceManager().getMainFileID());
     // llvm::outs() << std::string(RewriteBuf->begin(), RewriteBuf->end());
@@ -762,14 +767,6 @@ protected:
 
       if (args[i] == "-d" || args[i] == "--debug") {
         DEBUG = true;
-      }
-      // Example error handling.
-      if (args[i] == "-an-error") {
-        DiagnosticsEngine &D = CI.getDiagnostics();
-        unsigned DiagID = D.getCustomDiagID(
-          DiagnosticsEngine::Error, "invalid argument '" + args[i] + "'");
-        D.Report(DiagID);
-        return false;
       }
     }
     if (args.size() && args[0] == "help")
