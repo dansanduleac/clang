@@ -368,8 +368,8 @@ public:
           // This behaviour might change in the future.
           if (attr) {
             Co.diagnosticAt(attr, DiagnosticsEngine::Error,
-              "This VarDecl's initialisation points to another asserted "
-              " variable, but it already carries the shown assertion.");
+              "This VarDecl's initialiser points to another asserted "
+              "variable, but it already carries the shown assertion.");
           }
           attr = extractor.attr;
           // TODO We have to take other things into account like indirection,
