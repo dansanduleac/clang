@@ -1,9 +1,11 @@
-#include "clang/AST/ASTConsumer.h"
+#include "clang/AST/AST.h"
+#include "clang/AST/ASTMutationListener.h" // temporary?
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/EvaluatedExprVisitor.h"
-#include "clang/AST/AST.h"
+#include "clang/Frontend/ASTConsumers.h"             // for CreateASTPrinter
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
+#include "clang/Frontend/MultiplexConsumer.h"
 #include "clang/Rewrite/Rewriter.h"
 #include "clang/Sema/SemaConsumer.h"
 // This is in "${CLANG_SOURCE_DIR}/lib", mind you.
@@ -653,9 +655,11 @@ public:
     //Transform.TransformDecl(Context.getTranslationUnitDecl());
 
     // Print out the rewritten contents.
-    const RewriteBuffer *RewriteBuf =
-        Rewriter->getRewriteBufferFor(Context.getSourceManager().getMainFileID());
-    llvm::outs() << std::string(RewriteBuf->begin(), RewriteBuf->end());
+
+    // TODO temporarily disabled.
+    // const RewriteBuffer *RewriteBuf =
+    //     Rewriter->getRewriteBufferFor(Context.getSourceManager().getMainFileID());
+    // llvm::outs() << std::string(RewriteBuf->begin(), RewriteBuf->end());
 
     //Rewriter->overwriteChangedFiles();
   }
@@ -673,13 +677,57 @@ public:
   */
 };
 
+llvm::StringRef theFrontendAction(clang::frontend::ActionKind K) {
+  using namespace clang::frontend;
+  switch (K) {
+    case ASTDump:                 return "ASTDump";
+    case ASTDumpXML:              return "ASTDumpXML";
+    case ASTPrint:                return "ASTPrint";
+    case ASTView:                 return "ASTView";
+    case DumpRawTokens:           return "DumpRawTokens";
+    case DumpTokens:              return "DumpTokens";
+    case EmitAssembly:            return "EmitAssembly";
+    case EmitBC:                  return "EmitBC";
+    case EmitHTML:                return "EmitHTML";
+    case EmitLLVM:                return "EmitLLVM";
+    case EmitLLVMOnly:            return "EmitLLVMOnly";
+    case EmitCodeGenOnly:         return "EmitCodeGenOnly";
+    case EmitObj:                 return "EmitObj";
+    case FixIt:                   return "FixIt";
+    case GenerateModule:          return "GenerateModule";
+    case GeneratePCH:             return "GeneratePCH";
+    case GeneratePTH:             return "GeneratePTH";
+    case InitOnly:                return "InitOnly";
+    case ParseSyntaxOnly:         return "ParseSyntaxOnly";
+    case PluginAction:            return "PluginAction";
+  }
+  return "<<UNKNOWN>>";
+}
+
 class AnnotateVariablesAction : public PluginASTAction {
 protected:
 
-  ASTConsumer *CreateASTConsumer(CompilerInstance &CI, llvm::StringRef) {
+  ASTConsumer *CreateASTConsumer(CompilerInstance &CI, llvm::StringRef file) {
     auto Rew = unique_ptr<Rewriter>(new Rewriter());
     Rew->setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
-    return new AnnotateVariablesConsumer(&CI.getASTContext(), move(Rew));
+    /* Try to poke at ProgramAction to see what action we're doing,
+       and ultimately if IRgen happens before our plugin. */
+    // Also, where does the simple parsing happening?
+    llvm::errs() << "ProgramAction = " 
+                 << theFrontendAction(CI.getFrontendOpts().ProgramAction)
+                 << "\n";
+    
+    ASTContext& Context = CI.getASTContext();
+    // Let's be smarter! Combine our consumer with an ASTPrinter (from
+    // ASTPrintAction) into a MultiplexConsumer.
+    llvm::SmallVector<ASTConsumer*, 2> Consumers;
+    Consumers.push_back(
+      new AnnotateVariablesConsumer(&Context, move(Rew)));
+    // And now print the AST!
+    if (raw_ostream *OS = CI.createDefaultOutputFile(false, file)) {
+      Consumers.push_back(CreateASTPrinter(OS));
+    }
+    return new MultiplexConsumer(Consumers);
   }
 
   bool ParseArgs(const CompilerInstance &CI,
