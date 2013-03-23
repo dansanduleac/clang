@@ -273,8 +273,16 @@ public:
 // But apparently we can still use a PluginASTAction, and create a 
 // SemaConsumer instead of a plain ASTConsumer (and it works!).
 
+class MyMutationListener : public ASTMutationListener {
+  void AddedVisibleDecl(const DeclContext *DC, const Decl *D) override {
+    llvm::errs() << "AddedVisibleDecl: ";
+    D->dump();
+  }
+};
+
 class MyTreeTransform : public TreeTransform<MyTreeTransform> {
   typedef TreeTransform<MyTreeTransform> BaseTransform;
+  typedef Common::AssertionAttr AssertionAttr;
 
   Common& Co;
 
@@ -292,8 +300,25 @@ public:
   /// By default, this operation does nothing. Subclasses may override this
   /// behavior to transform attributes.
   void transformAttrs(Decl *Old, Decl *New) {
-
+    llvm::errs() << "transformAttrs called with: ";
+    Old->dump();
+    New->dump();
+    llvm::errs() << "\n";
+    // Guarantees that if it returns an attr, it is sane.
+    AssertionAttr* attr = Co.getAssertionAttr(Old);
+    if (attr) {
+      New->addAttr(Co.QualifyAttr(attr));
+    }
   }
+
+  // let's see that this actually works...
+
+  ASTMutationListener *GetASTMutationListener() {
+    return Listener;
+  }
+
+private:
+  ASTMutationListener* Listener = new (*Co.getContext()) MyMutationListener();
 };
 
 
