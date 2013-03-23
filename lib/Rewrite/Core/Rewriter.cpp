@@ -334,10 +334,7 @@ bool Rewriter::ReplaceStmt(Stmt *From, Stmt *To) {
     return true;
 
   // Get the new text.
-  std::string SStr;
-  llvm::raw_string_ostream S(SStr);
-  To->printPretty(S, 0, PrintingPolicy(*LangOpts));
-  const std::string &Str = S.str();
+  std::string Str = ConvertToString(To);
 
   ReplaceText(From->getLocStart(), Size, Str);
   return false;
