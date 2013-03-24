@@ -115,6 +115,8 @@ public:
   DiagnosticBuilder
   diagnosticAt(T* X, DiagnosticsEngine::Level lvl, StringRef str) {
     // All AST node ranges are token ranges from what I know.
+    // TODO apart from the SourceLocation needed, we can just << X
+    // everything... (making the below function obsolete-ish..)
     return diagnosticAt(CharSourceRange::getTokenRange(getSourceRange(X)),
                         lvl, str);
   }
@@ -124,9 +126,8 @@ public:
                     StringRef str) {
     DiagnosticsEngine &D = Context->getDiagnostics();
     unsigned DiagID = D.getCustomDiagID(lvl, str);
-    DiagnosticBuilder db = D.Report(csr.getBegin(), DiagID);
-    db.AddSourceRange(csr);
-    return db;
+    // << does .AddSourceRange() too!
+    return D.Report(csr.getBegin(), DiagID) << csr;
   }
 
 
