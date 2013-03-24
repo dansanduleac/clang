@@ -87,8 +87,8 @@ public:
   }
 
   template <typename T>
-  void warnAt(T* X, StringRef s) {
-    diagnosticAt(X, DiagnosticsEngine::Warning, s);
+  DiagnosticBuilder warnAt(T* X, StringRef s) {
+    return diagnosticAt(X, DiagnosticsEngine::Warning, s);
   }
 
 
@@ -112,16 +112,21 @@ public:
 
   // For convenience, to highlight an AST node (of type T).
   template <typename T>
-  void diagnosticAt(T* X, DiagnosticsEngine::Level lvl, StringRef str) {
+  DiagnosticBuilder
+  diagnosticAt(T* X, DiagnosticsEngine::Level lvl, StringRef str) {
     // All AST node ranges are token ranges from what I know.
-    diagnosticAt(CharSourceRange::getTokenRange(getSourceRange(X)), lvl, str);
+    return diagnosticAt(CharSourceRange::getTokenRange(getSourceRange(X)),
+                        lvl, str);
   }
 
-  void diagnosticAt(CharSourceRange csr, DiagnosticsEngine::Level lvl,
+  DiagnosticBuilder
+  diagnosticAt(CharSourceRange csr, DiagnosticsEngine::Level lvl,
                     StringRef str) {
     DiagnosticsEngine &D = Context->getDiagnostics();
     unsigned DiagID = D.getCustomDiagID(lvl, str);
-    D.Report(csr.getBegin(), DiagID).AddSourceRange(csr);
+    DiagnosticBuilder db = D.Report(csr.getBegin(), DiagID);
+    db.AddSourceRange(csr);
+    return db;
   }
 
 
