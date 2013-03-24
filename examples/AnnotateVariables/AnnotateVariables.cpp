@@ -369,11 +369,6 @@ public:
       
       AssertionAttr* attr = Co.getAssertionAttr(VD);
 
-      if (attr) {
-        // Assign a unique ID.
-        // Pass DS so that the Rewriter has something to replace.
-        Co.QualifyDeclInPlace(DS, VD, attr);
-      }
       // Deal with initialisation ("assertion stealing").
       // Conditions:
       //  1) VD->getType() is a  "T " + one or more "*const",
@@ -397,10 +392,19 @@ public:
               "variable, but it already carries the shown assertion.");
           }
           attr = extractor.attr;
-          // TODO We have to take other things into account like indirection,
-          // other info...
+          // TODO We have to remember other things into the annotation, like
+          // indirection...
           Co.AddAssertionAttr(DS, VD, attr);
+          return true;
         }
+      }
+
+      // If we were annotated, and no annotations were inherited from
+      // the initializer.
+      if (attr) {
+        // Assign a unique ID.
+        // Pass DS so that the Rewriter has something to replace.
+        Co.QualifyDeclInPlace(DS, VD, attr);
       }
     }
     return true;
