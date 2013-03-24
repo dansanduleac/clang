@@ -343,69 +343,56 @@ public:
 
   // TODO what about int *x = new int;   or even with a parameter
 
-  // Visit DeclStmt instead of VarDecl, because we want the Stmt itself to replace
-  // in the Rewriter.
-  bool VisitDeclStmt(DeclStmt* DS) {
-    //warnAt(DS, "DeclStmt");
-    Decl* D;
-    if (DS->isSingleDecl()) {
-      D = DS->getSingleDecl();
-    } else {
-      assert(false && "Not implemented.");
-    }
-
+  bool VisitVarDecl(VarDecl* VD) {
     // TODO foreach decl that is a VarDecl (if there are multiple)
 
-    if (VarDecl* VD = dyn_cast<VarDecl>(D)) {
-      raw_ostream &e = llvm::errs();
-      if (DEBUG) {
-        //(e.changeColor(yellow, true) << "VarDecl").resetColor()
-        e << yellow << "VarDecl" << normal
-          << " at " << Co.printLoc(VD) << ": \""
-          << VD->getName() << "\" [ ";
-        VD->dump();
-        e << " ]\n";
-      }
-      
-      AssertionAttr* attr = Co.getAssertionAttr(VD);
+    raw_ostream &e = llvm::errs();
+    if (DEBUG) {
+      e << yellow << "VarDecl" << normal
+        << " at " << Co.printLoc(VD) << ": \""
+        << VD->getName() << "\" [ ";
+      VD->dump();
+      e << " ]\n";
+    }
+    
+    AssertionAttr* attr = Co.getAssertionAttr(VD);
 
-      // Deal with initialisation ("assertion stealing").
-      // Conditions:
-      //  1) VD->getType() is a  "T " + one or more "*const",
-      //      i.e. int *const *const.
+    // Deal with initialisation ("assertion stealing").
+    // Conditions:
+    //  1) VD->getType() is a  "T " + one or more "*const",
+    //      i.e. int *const *const.
 
-      //  2) (Expr representing the "T" in the initializer)->getFoundDecl() has
-      //  to be asserted. (this one's the same as for the AssignmentOp case)
-      //     TODO move logic for (2) in a separate function / class that
-      //     somewhat emulates StmtVisitor.
-      if (Expr* Init = VD->getInit()) {
-        ExprDREExtractor extractor(*Context, Co, Init);
-        extractor.run();
+    //  2) (Expr representing the "T" in the initializer)->getFoundDecl() has
+    //  to be asserted. (this one's the same as for the AssignmentOp case)
+    //     TODO move logic for (2) in a separate function / class that
+    //     somewhat emulates StmtVisitor.
+    if (Expr* Init = VD->getInit()) {
+      ExprDREExtractor extractor(*Context, Co, Init);
+      extractor.run();
 
-        if (extractor.found()) {
-          // Raise an error if we found a reference to another assertion,
-          // but we already have an AssertionAttr on our back.
-          // This behaviour might change in the future.
-          if (attr) {
-            Co.diagnosticAt(attr, DiagnosticsEngine::Error,
-              "This VarDecl's initialiser points to another asserted "
-              "variable, but it already carries the shown assertion.");
-          }
-          attr = extractor.attr;
-          // TODO We have to remember other things into the annotation, like
-          // indirection...
-          Co.AddAssertionAttr(DS, VD, attr);
-          return true;
+      if (extractor.found()) {
+        // Raise an error if we found a reference to another assertion,
+        // but we already have an AssertionAttr on our back.
+        // This behaviour might change in the future.
+        if (attr) {
+          Co.diagnosticAt(attr, DiagnosticsEngine::Error,
+            "This VarDecl's initialiser points to another asserted "
+            "variable, but it already carries the shown assertion.");
         }
+        attr = extractor.attr;
+        // TODO We have to remember other things into the annotation, like
+        // indirection...
+        VD->addAttr(attr);
+        return true;
       }
+    }
 
-      // If we were annotated, and no annotations were inherited from
-      // the initializer.
-      if (attr) {
-        // Assign a unique ID.
-        // Pass DS so that the Rewriter has something to replace.
-        Co.QualifyDeclInPlace(DS, VD, attr);
-      }
+    // If we were annotated, and no annotations were inherited from
+    // the initializer.
+    if (attr) {
+      // Assign a unique ID. The Decl will now point to the "new" one
+      // because it's been created at the same location.
+      Co.QualifyAttrReplace(attr);
     }
     return true;
   }
