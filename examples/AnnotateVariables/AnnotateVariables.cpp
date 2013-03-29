@@ -1,7 +1,6 @@
 #include "clang/AST/AST.h"
 #include "clang/AST/ASTMutationListener.h" // temporary?
 #include "clang/AST/RecursiveASTVisitor.h"
-#include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/Frontend/ASTConsumers.h"             // for CreateASTPrinter
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
@@ -12,14 +11,10 @@
 #include "Sema/TreeTransform.h"
 
 #include "ClangUtils.h"
+#include "Common.h"
+#include "ReferenceExprExtractor.h"
 
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallString.h"
-#include "llvm/Support/raw_ostream.h"
-
-#include <sstream>
 #include <memory>
-#include <new>
 
 using namespace clang;
 #if LLVM_USE_RVALUE_REFERENCES
@@ -31,254 +26,6 @@ using std::unique_ptr;
 
 namespace {
 
-bool DEBUG = false;
-
-struct Color {
-  raw_ostream::Colors color;
-  bool bold;
-
-  Color(raw_ostream::Colors col, bool bol = true) : color(col), bold(bol) {}
-};
-
-struct Normal {} normal;
-
-raw_ostream& operator<<(raw_ostream& OS, const Color& c) {
-  return OS.changeColor(c.color, c.bold);
-}
-
-raw_ostream& operator<<(raw_ostream& OS, const Normal&) {
-  return OS.resetColor();
-}
-
-static const Color green = raw_ostream::GREEN;
-static const Color blue = raw_ostream::BLUE;
-static const Color red = raw_ostream::RED;
-static const Color magenta = raw_ostream::MAGENTA;
-static const Color yellow = raw_ostream::YELLOW;
-static const Color savedColor = raw_ostream::SAVEDCOLOR;
-
-
-const llvm::StringRef GLOBAL_PREFIX = "assertion";
-
-class Common {
-  ASTContext* Context;
-  Rewriter* Rewriter;
-
-public:
-  Common(ASTContext* C, class Rewriter* Rewriter)
-    : Context(C), Rewriter(Rewriter) { }
-
-  ASTContext* getContext() { return Context; }
-
-  // Convenience functions for debugging and diagnostics.
-  // ----------------------------------------------------
-
-  template <typename T>
-  std::string printLoc(T* D) {
-    FullSourceLoc FullLocation = Context->getFullLoc(D->getLocStart());
-    if (FullLocation.isValid()) {
-      std::ostringstream ss;
-      ss << FullLocation.getSpellingLineNumber() << ":"
-         << FullLocation.getSpellingColumnNumber();
-      return ss.str();
-    } else {
-      return "[INVALID LOCATION]";
-    }
-  }
-
-  template <typename T>
-  DiagnosticBuilder warnAt(T* X, StringRef s) {
-    return diagnosticAt(X, DiagnosticsEngine::Warning, s);
-  }
-
-
-  template <typename T>
-  static SourceRange getSourceRange(T* X, const llvm::false_type&) {
-    return X->getSourceRange();
-  }
-  
-  static SourceRange getSourceRange(Attr* X, const llvm::true_type&) {
-    return X->getRange();
-  }
-
-  template <bool Cond>
-  struct as_truth : llvm::conditional<Cond, llvm::true_type, llvm::false_type> {};
-
-  template <typename T>
-  static SourceRange getSourceRange(T* X) {
-    typename as_truth<llvm::is_base_of<Attr,T>::value>::type choice;
-    return getSourceRange(X, choice);
-  }
-
-  // For convenience, to highlight an AST node (of type T).
-  template <typename T>
-  DiagnosticBuilder
-  diagnosticAt(T* X, DiagnosticsEngine::Level lvl, StringRef str) {
-    // All AST node ranges are token ranges from what I know.
-    // TODO apart from the SourceLocation needed, we can just << X
-    // everything... (making the below function obsolete-ish..)
-    return diagnosticAt(CharSourceRange::getTokenRange(getSourceRange(X)),
-                        lvl, str);
-  }
-
-  DiagnosticBuilder
-  diagnosticAt(CharSourceRange csr, DiagnosticsEngine::Level lvl,
-                    StringRef str) {
-    DiagnosticsEngine &D = Context->getDiagnostics();
-    unsigned DiagID = D.getCustomDiagID(lvl, str);
-    // << does .AddSourceRange() too!
-    return D.Report(csr.getBegin(), DiagID) << csr;
-  }
-
-
-  // MY CUSTOM ATTRIBUTE
-  // -------------------------------------------------
-  // TODO:
-  // Update these to actually use a custom attribute, not just AnnotateAttr,
-  // because that's quite inflexible.
-
-  typedef AnnotateAttr AssertionAttr;
-
-  enum Assertion {
-    Initial,
-    Qualified
-  };
-
-  // There will be a different Visitor for each translation unit, but we do
-  // not need globally unique UIDs. Each translation unit can have its own set
-  // of UIDs, but the programmer will have to be consistent with assertion
-  // annotations.
-  // TODO
-  // If such an annotated variable is passed to an un-annotated, or differently
-  // annotated function, a warning will be issued.
-  int uid = 1;
-
-  // Cache for our unpacked attribute data, in this case the getAnnotation() split
-  // by the separator.
-  // TODO need  define DenseMapInfo for AssertionAttr*
-  llvm::DenseMap<AssertionAttr*, llvm::SmallVector<StringRef,4>> annotations;
-
-  // Extract the valid AssertionAttr, if any.
-
-  template <typename T>
-  static AssertionAttr* getAssertionAttr(T* obj) {
-    AssertionAttr* attr = obj->template getAttr<AssertionAttr>();
-    return attr && IsSaneAssertionAttr(attr) ? attr : NULL;
-  }
-
-  template <typename T>
-  static bool hasAssertionAttr(T* obj) {
-    return getAssertionAttr(obj) != NULL;
-  }
-
-  // To check if this Attr is in a sane state, representing a correct AssertionAttr.
-  // Using it here since we're emulating on top of AnnotateAttr, and not annotations
-  // are valid in our context.
-  // TODO: deprecate after we implement a separate Attr.
-  static bool IsSaneAssertionAttr(const AssertionAttr* attr) {
-    return attr->getAnnotation().startswith(GLOBAL_PREFIX);
-  }
-
-  void AddAssertionAttr(DeclStmt* DS, Decl* D, AssertionAttr* attr) {
-    D->addAttr(attr);
-
-    // Rewrite the source code.
-
-    // Obtain the replacement string, Str (by printPretty'ing the Stmt).
-    std::string Str = Rewriter->ConvertToString(DS);
-    if (DEBUG) {
-      llvm::errs() << red << "Rewriting DeclStmt: " << normal << Str << "\n";
-      warnAt(DS, " <--- old DeclStmt");
-    }
-
-    // TODO just rewrite the Decl... not the entire Stmt
-
-    SourceManager& SM = Context->getSourceManager();
-    SourceLocation SLoc, ELoc;
-    // Confusingly enough, Stmt had getLoc(Start|End), but DeclStmt defines
-    // get(Start|End)Loc() as they're passed to DeclStmt in the constructor.
-    
-    // Can't just use Rewriter->ReplaceStmt() because Rewriter->isRewritable(
-    // DS->getStartLoc()) == false, if it's a macro expansion. So get location
-    // where expansion occurred (which will be in the source code).
-    SLoc = SM.getExpansionLoc(DS->getStartLoc());
-    ELoc = SM.getExpansionLoc(DS->getEndLoc());
-
-    //diagnosticAt(CharSourceRange::getTokenRange(SourceRange(SLoc, ELoc)),
-    //  DiagnosticsEngine::Warning, "ExpandedLocation");
-    int Size = Rewriter->getRangeSize(SourceRange(SLoc, ELoc));
-    /*
-    llvm::errs() << "Rewriter->isRewritable(...) == "
-                 << Rewriter->isRewritable(SLoc) << "\n";
-    llvm::errs() << "Size = " << Size << "\n";
-    */
-
-    // TOTO this is a problem if further down we rewrite the initialiser 
-    // contained in this DeclExpr as well... 
-    // How does it figure out the new position of the initialiser btw....
-    Rewriter->ReplaceText(SLoc, Size, Str);
-  }
-
-  // TODO change to use something more high-level than a string (as the new
-  // value). DeclStmt used only for Rewriter to have a Stmt to replace
-  // (otherwise we could have done this in VarDecl.
-  /*
-  void ReplaceAssertionAttr(DeclStmt* DS, Decl* D, llvm::StringRef newS) {
-    AssertionAttr* attr = D->getAttr<AssertionAttr>();
-    assert(attr && "Tried to replace AssertionAttr for Decl which has none");
-    D->dropAttr<AssertionAttr>();
-    // Using placement new. Why allocate another copy when we can reuse.
-    // ASTContext will deallocate it at the end of things. 
-    attr = ::new(attr) AssertionAttr(range, *Context, newS);
-
-    AddAssertionAttr(DS, D, attr);
-  }
-  */
-
-  // Adds UID to the attribute, by replacing the original attribute object.
-  void QualifyDeclInPlace(DeclStmt* DS, Decl* D, AssertionAttr* attr) {
-    assert(IsSaneAssertionAttr(attr) &&
-      "Tried to replace AssertionAttr for Decl which has none");
-    D->dropAttr<AssertionAttr>();
-    attr = QualifyAttrReplace(attr);
-    AddAssertionAttr(DS, D, attr);
-    if (DEBUG) {
-      llvm::errs() << yellow << "Qualified: " << normal 
-                   << attr->getAnnotation() << "\n";
-    }
-  }
-
-  // Just returns a string that represents the qualified AnnotateAttr.
-  // 
-  std::string GetQualifiedAttrString(AnnotateAttr* attr) {
-    SmallString<20> an = attr->getAnnotation();
-    an.append(",");
-    llvm::raw_svector_ostream S(an);
-    S << uid++;
-    return S.str();
-  }
-
-  // Qualifies an existing attr like QualifyAttr, but replaces the original
-  // attr.
-  AssertionAttr* QualifyAttrReplace(AssertionAttr* attr) {
-    return ::new(attr) AssertionAttr(attr->getRange(), *Context,
-                                     GetQualifiedAttrString(attr));
-  }
-
-  // Return a new AssertionAttr representing the qualified attr.
-  // Does NOT check whether attr already qualified, or not sane.
-  AssertionAttr* QualifyAttr(AssertionAttr* attr) {
-    return new(*Context) AnnotateAttr(attr->getRange(), *Context, 
-                                      GetQualifiedAttrString(attr));
-  }
-};
-
-// TODO when we figure out how to get ahold of the Sema before it gets
-// reset by CompilerInstance (PluginASTAction == too late already).
-// If I remember correctly, derive ASTFrontendAction and save the Sema.
-// But apparently we can still use a PluginASTAction, and create a 
-// SemaConsumer instead of a plain ASTConsumer (and it works!).
-
 class MyMutationListener : public ASTMutationListener {
   void AddedVisibleDecl(const DeclContext *DC, const Decl *D) override {
     llvm::errs() << "AddedVisibleDecl: ";
@@ -287,24 +34,61 @@ class MyMutationListener : public ASTMutationListener {
 };
 
 class MyTreeTransform : public TreeTransform<MyTreeTransform> {
-  typedef TreeTransform<MyTreeTransform> BaseTransform;
-  typedef Common::AssertionAttr AssertionAttr;
+  typedef TreeTransform<MyTreeTransform> Base;
 
   Common& Co;
 
 public:
   MyTreeTransform(Common& Common, Sema& S)
-    : BaseTransform(S), Co(Common) { }
+    : Base(S), Co(Common) { }
 
-  // TODO needed? Do we actually need to?
-  // Make sure we redo semantic analysis
-    bool AlwaysRebuild() { return true; }
+  // FIXME needed? Do we actually need to?
+  bool AlwaysRebuild() { return true; }
 
-  /// \brief Transform the attributes associated with the given declaration and 
-  /// place them on the new declaration.
-  ///
-  /// By default, this operation does nothing. Subclasses may override this
-  /// behavior to transform attributes.
+  // Do not need this after all? We will only transform statements
+  /*
+  Decl* TransformDeclContextHelper(DeclContext* DC) {
+    if (!DC)
+      return 0;
+
+    for (DeclContext::decl_iterator Child = DC->decls_begin(),
+             ChildEnd = DC->decls_end();
+         Child != ChildEnd; ++Child) {
+      // BlockDecls are traversed through BlockExprs.
+      if (!isa<BlockDecl>(*Child))
+        *Child = TransformDecl(*Child);
+    }
+    return DC; // any changes actually?
+  }
+  */
+
+  // TODO
+  // Need to figure out whether the transform recurses into blocks
+  // 1) a block inside a function. BlockDecl?
+  //    apparently traversed through BlockExpr so maybe that can be
+  //    recursed through by Stmt rebuilding.
+  //    Check TransformBlockExpr ......
+
+  Decl* TransformDecl(SourceLocation Loc, Decl* D) {
+    // Try to reimplement DeclContext traversal from RecursiveASTVisitor
+    //  RecursiveASTVisitor<Derived>::TraverseDeclContextHelper
+    return Base::TransformDecl(Loc, D);
+  }
+
+  // Transform Exprs that modify asserted variables by wrapping them
+  // inside AttributedStmt.
+  /*
+  ExprResult TransformExpr(Expr* E) {
+    // Normal Case
+    if (true) {
+      return Base::TransformExpr(E);
+    } else {
+      StmtResult res = Base::RebuildAttributedStmt( ... );
+    }
+  }
+  */
+
+  /*
   void transformAttrs(Decl *Old, Decl *New) {
     llvm::errs() << "transformAttrs called with: ";
     Old->dump();
@@ -316,8 +100,7 @@ public:
       New->addAttr(Co.QualifyAttr(attr));
     }
   }
-
-  // let's see that this actually works...
+  */
 
   ASTMutationListener *GetASTMutationListener() {
     return Listener;
@@ -335,14 +118,25 @@ class AnnotateVariablesVisitor
   ASTContext* Context;
   // FIXME Are we using this Sema?
   Sema& SemaRef;
+  MyTreeTransform& Transform;
   Rewriter* Rewriter;
   typedef Common::AssertionAttr AssertionAttr;
 
 public:
-  explicit AnnotateVariablesVisitor(Common& Common,
-      ASTContext* Context, Sema& SemaRef, class Rewriter* Rewriter)
-    : Co(Common), Context(Context), SemaRef(SemaRef),
-      Rewriter(Rewriter) {}
+  explicit AnnotateVariablesVisitor(Common& C, ASTContext* Context,
+    Sema& SemaRef, MyTreeTransform& T, class Rewriter* R)
+    : Co(C), Context(Context), SemaRef(SemaRef),
+      Transform(T), Rewriter(R) {}
+
+  // SOME INTRICATE HOOKS HERE...
+  // ----------------------------
+
+  bool VisitDecl(Decl* D) {
+    llvm::errs() << yellow << D->getDeclKindName() << ":\n" << normal;
+    D->dump();
+    llvm::errs() << "\n";
+    return true;
+  }
 
   // VISITORS
   // -------------------------------------------------
@@ -373,7 +167,7 @@ public:
     //     TODO move logic for (2) in a separate function / class that
     //     somewhat emulates StmtVisitor.
     if (Expr* Init = VD->getInit()) {
-      ExprDREExtractor extractor(*Context, Co, Init);
+      ReferenceExprExtractor extractor(*Context, Co, Init);
       extractor.run();
 
       if (extractor.found()) {
@@ -490,74 +284,6 @@ public:
   }
   */
 
-  class ReferencingExprExtractor {
-
-  };
-
-  // Use this to extract any DeclRefExpr from lvalues that we assign to
-  //   (or that we pass to functions).
-  class ExprDREExtractor : public EvaluatedExprVisitor<ExprDREExtractor> {
-    Common& Co;
-    Expr* toVisit;
-  public:
-    // We need Common ref to use warnAt, or any other stuff that depends
-    // on the ASTContext..
-    ExprDREExtractor(ASTContext& C, Common& Common,
-                     Expr* toVisit)
-      : EvaluatedExprVisitor<ExprDREExtractor>(C),
-        Co(Common),
-        toVisit(toVisit) {}
-    // For pointers, should only work if the pointer is const,
-    // so, in regex terms, "T (\*const)*".
-
-    // This has a problem if we have some weird lvalue like:  *(A + B) ..
-    // TODO: how do we enforce that this Expr is a combination of
-    // UnaryOperators applied to a DeclRefExpr?
-
-    // Yup definitely needs to be more tight...
-    // Therefore: 
-
-
-    // TODO reimplement void Visit(Expr* E), to not allow visitation unless
-    // it's following our required pattern.
-
-    bool found() {
-      return dre != NULL;
-    }
-
-    void VisitDeclRefExpr(DeclRefExpr* DRE) {
-      NamedDecl* orig = DRE->getFoundDecl();
-      //Co.warnAt(orig, "DRE referenced this object");
-      if ((attr = Co.getAssertionAttr(orig))) {
-        if (dre != NULL) {
-          success = false;
-          return;
-        } 
-        dre = DRE;
-
-        // Some debugging on the type...
-        std::string S; llvm::raw_string_ostream os(S);
-        clang::QualType tt = DRE->getType();
-        os << "DRE->getType() == " << tt.getAsString();
-        Co.warnAt(DRE, os.str());
-      }
-    }
-
-    void run() {
-      Visit(toVisit);
-      if (!success) {
-        Co.
-        diagnosticAt(toVisit, DiagnosticsEngine::Fatal,
-                     "Found more than 1 DRE inside this Expr");
-      }
-    }
-
-    DeclRefExpr* dre = NULL;
-    AssertionAttr* attr = NULL;
-    int indirection = 0;
-    bool success = true;
-  };
-
   bool VisitBinaryOperator(BinaryOperator* bo) {
     if (bo->isAssignmentOp()) {
       Expr* lhs = bo->getLHS();
@@ -569,7 +295,7 @@ public:
       // Possibly: use ClangUtils.h, getStmtRangeWithSemicolon,
       // if we want a sourceRange including semicolon.
 
-      ExprDREExtractor extractor(*Context, Co, lhs);
+      ReferenceExprExtractor extractor(*Context, Co, lhs);
       // why does VisitStmt sometimes not find the DRE....
       extractor.run();
       
@@ -649,9 +375,9 @@ class AnnotateVariablesConsumer : public SemaConsumer {
   unique_ptr<Rewriter> Rewriter;
   Common Co;
   Sema* SemaPtr;
+  MyTreeTransform Transform;
   // A RecursiveASTVisitor implementation.
   AnnotateVariablesVisitor Visitor;
-  MyTreeTransform Transform;
 
 public:
   // TODO: change rewriter to be a OwningPtr<Rewriter>
@@ -659,8 +385,8 @@ public:
       unique_ptr<class Rewriter>&& rewriter)
     : SemaConsumer(), Context(Context), Rewriter(move(rewriter)),
       Co(Context, Rewriter.get()),
-      Visitor(Co, Context, *SemaPtr, Rewriter.get()),
-      Transform(Co, *SemaPtr) {}
+      Transform(Co, *SemaPtr),
+      Visitor(Co, Context, *SemaPtr, Transform, Rewriter.get()) {}
 
   void InitializeSema(Sema &S) {
     SemaPtr = &S;
