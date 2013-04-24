@@ -55,7 +55,7 @@ public:
   // ----------------------------------------------------
 
   template <typename T>
-  std::string printLoc(T* D) {
+  std::string printLocInternal(T* D) {
     FullSourceLoc FullLocation = Context->getFullLoc(D->getLocStart());
     if (FullLocation.isValid()) {
       std::ostringstream ss;
@@ -65,6 +65,14 @@ public:
     } else {
       return "[INVALID LOCATION]";
     }
+  }
+
+  std::string printLoc(Stmt* S) {
+    return printLocInternal(S);
+  }
+
+  std::string printLoc(Decl* D) {
+    return printLocInternal(D);
   }
 
   template <typename T>
