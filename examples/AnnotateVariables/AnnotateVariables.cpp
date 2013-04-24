@@ -26,12 +26,14 @@ using std::unique_ptr;
 
 namespace {
 
+// TODO useful at all?
 class MyMutationListener : public ASTMutationListener {
   void AddedVisibleDecl(const DeclContext *DC, const Decl *D) override {
     llvm::errs() << "AddedVisibleDecl: ";
     D->dump();
   }
 };
+
 
 class MyTreeTransform : public TreeTransform<MyTreeTransform> {
   typedef TreeTransform<MyTreeTransform> Base;
@@ -116,27 +118,59 @@ class AnnotateVariablesVisitor
   : public RecursiveASTVisitor<AnnotateVariablesVisitor> {
   Common& Co;
   ASTContext* Context;
-  // FIXME Are we using this Sema?
-  Sema& SemaRef;
-  MyTreeTransform& Transform;
+  // We want this to change when consumer gets InitializeSema called on it.
+  // Therefore, reference.
+  Sema*& SemaPtr;
   Rewriter* Rewriter;
   typedef Common::AssertionAttr AssertionAttr;
 
 public:
   explicit AnnotateVariablesVisitor(Common& C, ASTContext* Context,
-    Sema& SemaRef, MyTreeTransform& T, class Rewriter* R)
-    : Co(C), Context(Context), SemaRef(SemaRef),
-      Transform(T), Rewriter(R) {}
+    Sema*& SemaPtr, class Rewriter* R)
+    : Co(C), Context(Context), SemaPtr(SemaPtr), Rewriter(R) {}
 
-  // SOME INTRICATE HOOKS HERE...
-  // ----------------------------
-
+  /*
   bool VisitDecl(Decl* D) {
     llvm::errs() << yellow << D->getDeclKindName() << ":\n" << normal;
     D->dump();
     llvm::errs() << "\n";
     return true;
   }
+  */
+
+  /*
+  // Has been moved to HandleTopLevelDecl ...
+  bool VisitFunctionDecl(FunctionDecl* FD) {
+    // (Stmt*) Fd->getBody();  FD->setBody(Stmt*)
+
+    // Decls can go like getContext() => the DeclContext* .
+    //  but does decl_iterator allow changing the children?
+    // they iterate with Decl::getNextDeclInContext(), 
+    // how do I transform a Decl and preserve the order?
+    // using llvm::PointerIntPair<Decl *, 2, unsigned> NextInContextAndBits;
+
+    // Stmts have children that apparently can be iterated on
+    //   by reference. But can we actually change that?
+    // Check out StmtIterator.h 
+
+
+    // Can't start creating a new CompoundStmt (which is what Body is)
+    // when Sema has no function scope. 
+    // It will call Sema::PushFunctionScope() which will try to
+    // Sema::getCurFunction()..
+    // Sema::PushFunctionScope()
+    SemaRef.PushFunctionScope();
+    StmtResult res = Transform.TransformStmt(FD->getBody());
+    //SemaRef.PopFunctionScope();
+    if (res.isUsable()) {
+      //FD->setBody(res.get());
+    } else {
+      Co.diagnosticAt(FD, DiagnosticsEngine::Error,
+        "Couldn't transform function body.");
+    }
+    return true;
+  }
+  */
 
   // VISITORS
   // -------------------------------------------------
@@ -234,7 +268,7 @@ public:
     //ValueDecl* me = dre->getDecl();
     // TODO: mark this dre->getDecl() with the attributes of dre->getFoundDecl().
     if (DEBUG) {
-      e << yellow << ">>> Stmt" << normal << " at " << printLoc(S) << " ";
+      e << yellow << ">>> Stmt" << normal << " at " << Co.printLoc(S) << " ";
       S->dump();
         // ": \""
         // << dre->getDecl()->getName() << "\" " << blue << "referencing " << normal
@@ -374,8 +408,7 @@ class AnnotateVariablesConsumer : public SemaConsumer {
   ASTContext* Context;
   unique_ptr<Rewriter> Rewriter;
   Common Co;
-  Sema* SemaPtr;
-  MyTreeTransform Transform;
+  Sema* SemaPtr = nullptr;
   // A RecursiveASTVisitor implementation.
   AnnotateVariablesVisitor Visitor;
 
@@ -385,8 +418,7 @@ public:
       unique_ptr<class Rewriter>&& rewriter)
     : SemaConsumer(), Context(Context), Rewriter(move(rewriter)),
       Co(Context, Rewriter.get()),
-      Transform(Co, *SemaPtr),
-      Visitor(Co, Context, *SemaPtr, Transform, Rewriter.get()) {}
+      Visitor(Co, Context, SemaPtr, Rewriter.get()) {}
 
   void InitializeSema(Sema &S) {
     SemaPtr = &S;
