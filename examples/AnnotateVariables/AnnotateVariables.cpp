@@ -166,7 +166,7 @@ public:
       //FD->setBody(res.get());
     } else {
       Co.diagnosticAt(FD, DiagnosticsEngine::Error,
-        "Couldn't transform function body.");
+        "couldn't transform function body");
     }
     return true;
   }
@@ -210,8 +210,8 @@ public:
         // This behaviour might change in the future.
         if (attr) {
           Co.diagnosticAt(attr, DiagnosticsEngine::Error,
-            "This VarDecl's initialiser points to another asserted "
-            "variable, but it already carries the shown assertion.");
+            "initialiser references asserted variable, but already has an "
+            "assertion");
         }
         attr = extractor.attr;
         // TODO We have to remember other things into the annotation, like
