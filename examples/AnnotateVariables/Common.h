@@ -82,12 +82,18 @@ public:
 
 
   template <typename T>
-  static SourceRange getSourceRange(T* X, const llvm::false_type&) {
-    return X->getSourceRange();
+  static SourceRange getSourceRange(T&& X, const llvm::false_type&) {
+    return X.getSourceRange();
   }
   
-  static SourceRange getSourceRange(Attr* X, const llvm::true_type&) {
-    return X->getRange();
+  static SourceRange getSourceRange(Attr&& X, const llvm::true_type&) {
+    return X.getRange();
+  }
+
+  // Get the implicit SourceRange for the token pointed to by this
+  // SourceLocation.
+  static SourceRange getSourceRange(SourceLocation L) {
+    return L;
   }
 
   template <bool Cond>
@@ -96,13 +102,20 @@ public:
   template <typename T>
   static SourceRange getSourceRange(T* X) {
     typename as_truth<llvm::is_base_of<Attr,T>::value>::type choice;
+    return getSourceRange(std::move(*X), choice);
+  }
+
+  // For exact types being sent.
+  template <typename T>
+  static SourceRange getSourceRange(T&& X) {
+    typename as_truth<llvm::is_base_of<Attr, llvm::remove_reference<T>>::value>::type choice;
     return getSourceRange(X, choice);
   }
 
   // For convenience, to highlight an AST node (of type T).
   template <typename T>
   DiagnosticBuilder
-  diagnosticAt(T* X, DiagnosticsEngine::Level lvl, StringRef str) {
+  diagnosticAt(T&& X, DiagnosticsEngine::Level lvl, StringRef str) {
     // All AST node ranges are token ranges from what I know.
     // TODO apart from the SourceLocation needed, we can just << X
     // everything... (making the below function obsolete-ish..)
@@ -145,7 +158,7 @@ public:
   // Cache for our unpacked attribute data, in this case the getAnnotation() split
   // by the separator.
   // TODO need  define DenseMapInfo for AssertionAttr*
-  llvm::DenseMap<AssertionAttr*, llvm::SmallVector<StringRef,4>> annotations;
+  // llvm::DenseMap<AssertionAttr*, llvm::SmallVector<StringRef,4>> annotations;
 
   // Extract the valid AssertionAttr, if any.
 
