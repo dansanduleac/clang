@@ -273,6 +273,24 @@ public:
     return new(*Context) AnnotateAttr(attr->getRange(), *Context, 
                                       GetQualifiedAttrString(attr));
   }
+
+  bool IsSameAssertion(AssertionAttr* a1, AssertionAttr* a2) {
+    if (a1 == nullptr || a2 == nullptr) {
+      return a1 == nullptr && a2 == nullptr;
+    }
+    SmallVector<StringRef, 3> Arr1, Arr2;
+    // Only compare the first 2 elements of each.
+    a1->getAnnotation().split(Arr1, ",", 2); Arr1.resize(2);
+    a2->getAnnotation().split(Arr2, ",", 2); Arr2.resize(2);
+    return Arr1 == Arr2;
+  }
+
+  StringRef AssertionKindAsString(AssertionAttr* attr) {
+    SmallVector<StringRef, 3> Arr;
+    attr->getAnnotation().split(Arr, ",", 2);
+    assert(Arr[0] == "assertion");
+    return Arr[1];
+  }
 };
 
 // And I really want this to be available outside:
