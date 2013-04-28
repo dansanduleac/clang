@@ -44,10 +44,8 @@ public:
   MyTreeTransform(Common& Common, Sema& S)
     : Base(S), Co(Common) { }
 
-  // FIXME needed? Do we actually need to?
-  bool AlwaysRebuild() { return true; }
 
-  // Do not need this after all? We will only transform statements
+  // FIXME Do not need this after all? We will only transform statements
   /*
   Decl* TransformDeclContextHelper(DeclContext* DC) {
     if (!DC)
@@ -65,11 +63,7 @@ public:
   */
 
   // TODO
-  // Need to figure out whether the transform recurses into blocks
-  // 1) a block inside a function. BlockDecl?
-  //    apparently traversed through BlockExpr so maybe that can be
-  //    recursed through by Stmt rebuilding.
-  //    Check TransformBlockExpr ......
+  // What are BlockDecl, BlockExpr ?
 
   Decl* TransformDecl(SourceLocation Loc, Decl* D) {
     // Try to reimplement DeclContext traversal from RecursiveASTVisitor
