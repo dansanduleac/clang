@@ -56,23 +56,76 @@ public:
   // What are BlockDecl, BlockExpr ?
 
   Decl* TransformDecl(SourceLocation Loc, Decl* D) {
-    // Try to reimplement DeclContext traversal from RecursiveASTVisitor
-    //  RecursiveASTVisitor<Derived>::TraverseDeclContextHelper
-    return Base::TransformDecl(Loc, D);
-  }
-
-  // Transform Exprs that modify asserted variables by wrapping them
-  // inside AttributedStmt.
-  /*
-  ExprResult TransformExpr(Expr* E) {
-    // Normal Case
-    if (true) {
-      return Base::TransformExpr(E);
+    // Need to descend into initialisers!
+    Decl* D2 = Base::TransformDecl(Loc, D);
+    // Hasn't been transformed yet, and is a VarDecl.
+    VarDecl* VD;
+    if (D2 == D && (VD = dyn_cast<VarDecl>(D))) {
+      // TODO
+      // hasDefinition (if it's defined in this TU) : DefinitionKind
+      Expr* Init = VD->getInit();
+      if (Init) {
+        ExprResult E = TransformExpr(Init);
+        if (E.isInvalid()) {
+          Co.diagnosticAt(Init, DiagnosticsEngine::Error,
+            "couldn't transform initializer");
+        } else {
+          VD->setInit(E.get());
+        }
+      }
+      return D;
+      // The Decl itself doesn't change but we set a new Init.
+      // We can't currently remember the fact that we touched it.
+      // transformedLocalDecl(D, ?);
     } else {
-      StmtResult res = Base::RebuildAttributedStmt( ... );
+      // Not going to happen in my case.
+      return D2;
     }
   }
-  */
+
+  ExprResult TransformAssertedAssignment(BinaryOperator* bo,
+      ReferenceExprExtractor& extractor) {
+    const clang::Attr* attrs[] = {
+      // TODO this shouldn't call getAnnotation() directly,
+      // should be some intermediary doing the AssertionAttr cloning
+      // (with a different indirection info too, maybe).
+      new (getSema().Context) AnnotateAttr(bo->getSourceRange(),
+              getSema().Context, extractor.attr->getAnnotation())
+    };
+
+    ExprResult Res = Base::RebuildAttributedExpr(
+        bo->getExprLoc(), attrs, bo);
+    return Res;
+  }
+
+  /// TODO also treat Unary assignment operators (prefix ++, --).
+
+  /// \brief If it assigns to a tracked variable, will wrap in an
+  /// AttributedExpr.
+  ExprResult TransformBinaryOperator(BinaryOperator* bo) {
+    // TODO start with "normal case", error handle, use the
+    // transformed BinaryOperator for further logic.
+    if (bo->isAssignmentOp()) {
+      Expr* lhs = bo->getLHS();
+
+      ReferenceExprExtractor extractor(getSema().Context, Co, lhs);
+      extractor.run();
+
+      if (extractor.found()) {
+        // extractor.getNewAnnotations --> pass to fct below
+        if (DEBUG) {
+          Co.warnAt(bo, "will be transformed");
+        }
+        return TransformAssertedAssignment(bo, extractor);
+      }
+    }
+    // Normal Case
+    return Base::TransformBinaryOperator(bo);
+  }
+
+  // TODO
+  // Aside from BinaryOperator, also check function calls that pass
+  // asserted variables, and call TransformAssertedAssignment on them too.
 
   /*
   void transformAttrs(Decl *Old, Decl *New) {
@@ -115,39 +168,35 @@ public:
   }
   */
 
-  /*
-  // Has been moved to HandleTopLevelDecl ...
-  bool VisitFunctionDecl(FunctionDecl* FD) {
-    // (Stmt*) Fd->getBody();  FD->setBody(Stmt*)
-
-    // Decls can go like getContext() => the DeclContext* .
-    //  but does decl_iterator allow changing the children?
-    // they iterate with Decl::getNextDeclInContext(), 
-    // how do I transform a Decl and preserve the order?
-    // using llvm::PointerIntPair<Decl *, 2, unsigned> NextInContextAndBits;
-
-    // Stmts have children that apparently can be iterated on
-    //   by reference. But can we actually change that?
-    // Check out StmtIterator.h 
-
-
-    // Can't start creating a new CompoundStmt (which is what Body is)
-    // when Sema has no function scope. 
-    // It will call Sema::PushFunctionScope() which will try to
-    // Sema::getCurFunction()..
-    // Sema::PushFunctionScope()
-    SemaRef.PushFunctionScope();
-    StmtResult res = Transform.TransformStmt(FD->getBody());
-    //SemaRef.PopFunctionScope();
-    if (res.isUsable()) {
-      //FD->setBody(res.get());
-    } else {
-      Co.diagnosticAt(FD, DiagnosticsEngine::Error,
-        "couldn't transform function body");
+  // Sanitise the type that we are assigning to (VD->getType()).
+  // VD->getType() is a  "T " + one or more "*const",
+  //      i.e. int *const *const.
+  bool IsDeeplyConstPointer(VarDecl const *VD, StringRef str) {
+    PointerType const *ptrType;
+    QualType typ = VD->getType();
+    TypeLoc TL = VD->getTypeSourceInfo()->getTypeLoc();
+    for (; (ptrType = dyn_cast<PointerType>(typ.getTypePtr()));
+         typ = ptrType->getPointeeType(),
+         // advance typeloc past const and ptr.
+         TL = TL.getUnqualifiedLoc().getNextTypeLoc()) {
+      if (!typ.isConstQualified()) {
+        // VD.getLocation() if we want to point to the VD's name.
+        Co.diagnosticAt(TL, DiagnosticsEngine::Error, str)
+          //<< TL.getSourceRange()
+          << FixItHint::CreateInsertion(TL.getLocEnd(), " const");
+        return true;
+      }
     }
-    return true;
+    return false;
   }
-  */
+
+  // Just a convenience method for using ReferenceExprExtractor to try and
+  // find a DRE that refers to an asserted variable.
+  ReferenceExprExtractor ExtractAssertedDRE(Expr *E) {
+    ReferenceExprExtractor extractor(*Context, Co, E);
+    extractor.run();
+    return extractor;
+  }
 
   // VISITORS
   // -------------------------------------------------
@@ -165,35 +214,56 @@ public:
       VD->dump();
       e << " ]\n";
     }
-    
+
     AssertionAttr* attr = Co.getAssertionAttr(VD);
+    // TODO
+    // if VD has an assertion, make sure that pointers are const, or error
+    // (don't want to assign something to it later).
+    QualType typ = VD->getType();
+    bool isPtr = isa<PointerType>(typ.getTypePtr());
+    if (attr && isPtr) {
+      if (IsDeeplyConstPointer(VD,
+            "asserted variable must be a deeply const pointer")) {
+        return true;
+      }
+    }
 
     // Deal with initialisation ("assertion stealing").
-    // Conditions:
-    //  1) VD->getType() is a  "T " + one or more "*const",
-    //      i.e. int *const *const.
 
-    //  2) (Expr representing the "T" in the initializer)->getFoundDecl() has
-    //  to be asserted. (this one's the same as for the AssignmentOp case)
-    //     TODO move logic for (2) in a separate function / class that
-    //     somewhat emulates StmtVisitor.
     if (Expr* Init = VD->getInit()) {
-      ReferenceExprExtractor extractor(*Context, Co, Init);
-      extractor.run();
+      auto extractor = ExtractAssertedDRE(Init);
+      // Esure that we are a pointer, otherwise we don't care.
 
-      if (extractor.found()) {
+      // extractor.found() returns true if (DRE found in Init)->getFoundDecl()
+      // is asserted, and correctly addressed (using only deref / addrOf
+      // operations in front of it).
+
+      if (isPtr && extractor.found()) {
+        // TODO in ReferenceExprExtractor: indirection should be the sum
+        // between the DRE type indirection (count '*') and our indirection
+        // referring to it.
+
         // Raise an error if we found a reference to another assertion,
         // but we already have an AssertionAttr on our back.
         // This behaviour might change in the future.
         if (attr) {
           Co.diagnosticAt(attr, DiagnosticsEngine::Error,
             "initialiser references asserted variable, but already has an "
-            "assertion");
+            "assertion")
+            << extractor.dre;
+          return true;
         }
-        attr = extractor.attr;
-        // TODO We have to remember other things into the annotation, like
-        // indirection...
-        VD->addAttr(attr);
+
+        // TODO IsDeeplyConstPointer -> functor, allow "returning" the
+        // DiagnosticBuilder.
+        if (IsDeeplyConstPointer(VD, "mutable pointer to asserted variable")) {
+          Co.diagnosticAt(extractor.attr, DiagnosticsEngine::Note,
+              "the variable's assertion");
+          return true;
+        }
+
+        // Everything's OK, qualify VD with stolen assertion.
+        VD->addAttr(extractor.attr);
         return true;
       }
     }
@@ -208,35 +278,6 @@ public:
     return true;
   }
 
-
-  // TODO
-  // TODO
-  // TODO: really!
-  // TODO: We probably don't need this here. Put this in a special
-  // StmtVisitor that analyses LeftHandSides (of assignment operators),
-  // as well as arguments in function calls.
-  bool VisitUnaryOperator(UnaryOperator* E) {
-    Expr* SE = E->getSubExpr();
-    DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(SE);
-    Decl* orig;
-    // We're looking to propagate the attrs of SE to E (if any).
-    // PROBLEM is that visitor first visits children, then parent...?
-    if (!DRE || ! (orig = DRE->getFoundDecl())->hasAttrs()) {
-      return true;
-    }
-    // getOpcode() -> UO_AddrOf | UO_Deref
-    if (E->getOpcode() == UO_AddrOf) {
-      // TODO
-      // Tag E with tag of SE + 1. 
-      // In reality, tag the statements with all the required information.
-    } else if (E->getOpcode() == UO_Deref) {
-      // Tag 
-    }
-    return true;
-  }
-
-
-  /*
   // This is for some serious debugging, basically to show the entire Stmt
   // class hierarchy of each Stmt.
   bool VisitStmt(Stmt* S) {
@@ -253,48 +294,8 @@ public:
     }
     return true;
   }
-  */
 
-  // TODO 
-  // Maybe not necessary to do this here. Should use such a function within
-  // StmtDREExtractor?
-  
   /*
-  bool VisitDeclRefExpr(DeclRefExpr* dre) {
-    auto &e = llvm::errs();
-    NamedDecl* orig = dre->getFoundDecl();
-    ValueDecl* me = dre->getDecl();
-    // TODO: mark this dre->getDecl() with the attributes of dre->getFoundDecl().
-    if (DEBUG) {
-      e << yellow << "DeclRefExpr" << normal << " at " << printLoc(dre) << ": \""
-        << dre->getDecl()->getName() << "\" " << blue << "referencing " << normal
-        << printLoc(orig) << " ";
-      dre->dump();
-      e << magenta << "   original: " << normal;
-      orig->dump();
-      e << normal;
-      // Attrs
-      if (orig->hasAttr<AnnotateAttr>()) {
-        auto an = orig->getAttr<AnnotateAttr>();
-        e << magenta << " having " << normal;
-        e << an->getAnnotation() << " ";
-      }
-      e << "\n";
-    }
-
-    return true;
-    
-    // DeclContext* dc = VD->getDeclContext();
-    // DeclContextLookupResult lr = dc->lookup(VD->getDeclName());
-    // e << "Looked up this decl at: " << "\n";
-    // for (auto I = lr.first, E = lr.second; I != E; ++I) {
-    //   NamedDecl* nd = *I;
-    //   e << printLoc(nd) << "\n";
-    // }
-    // e << "\n"; 
-  }
-  */
-
   bool VisitBinaryOperator(BinaryOperator* bo) {
     if (bo->isAssignmentOp()) {
       Expr* lhs = bo->getLHS();
@@ -309,7 +310,7 @@ public:
       ReferenceExprExtractor extractor(*Context, Co, lhs);
       // why does VisitStmt sometimes not find the DRE....
       extractor.run();
-      
+
       // Maybe: use type of lhs vs type of DeclRefExpr ...
 
       if (!extractor.found()) {
@@ -320,7 +321,7 @@ public:
         // TODO this shouldn't call getAnnotation() directly,
         // should be some intermediary doing the AssertionAttr cloning
         // (with a different indirection info too).
-        new (*Context) AnnotateAttr(sourceRange, *Context, 
+        new (*Context) AnnotateAttr(sourceRange, *Context,
                                     extractor.attr->getAnnotation())
       };
 
@@ -340,45 +341,73 @@ public:
         llvm::errs() << red << "Actually replacing:\n" << normal;
         int Size = Rewriter->getRangeSize(
           CharSourceRange::getTokenRange(bo->getSourceRange()));
-        /*
-        diagnosticAt(CharSourceRange::getCharRange(
-                        bo->getLocStart(),
-                        bo->getLocStart().getLocWithOffset(Size)),
-                     DiagnosticsEngine::Warning,
-                     "<--- this");
-        */
         Co.warnAt(bo, "<--- this");
       }
       // Use Rewriter::ReplaceStmt to replace this with an AttributedStmt.
-      Rewriter->ReplaceStmt(bo, wrapper);      
+      Rewriter->ReplaceStmt(bo, wrapper);
     }
     return true;
   }
+  */
 
-  // Needed for figuring out if any arguments are tagged.
-  // TODO figure out how, or do it in DeclRefExpr ?
-  //
-  // "Note that since WalkUpFromFoo() calls WalkUpFromBar() (where Bar is Foo's
-  // super class) before calling VisitFoo(), the result is that the Visit*()
-  // methods for a given node are called in the top-down order (e.g. for a node
-  // of type NamedDecl, the order will be VisitDecl(), VisitNamedDecl(), and
-  // then VisitNamespaceDecl())."
-  // ==> may be the case that we can only do that analysis in DeclRefExpr.
-
-  bool VisitCallExpr(CallExpr *Call) {
-    if (FunctionDecl *Callee = Call->getDirectCallee()) {
+  /// Ensure that parameters in function calls don't lose their assertion when
+  /// passed, unless explicitly requested by user.  It is allowed for regular
+  /// passed values and even pointers (for now) to become asserted inside the
+  /// function.
+  /// TODO Consider issuing a warning when passing a regular pointer to a
+  /// function that will assert its value.
+  bool VisitCallExpr(CallExpr const *Call) {
+    if (FunctionDecl const *Callee = Call->getDirectCallee()) {
       if (DEBUG) {
         llvm::errs() << yellow << "Call to " << normal
           << Callee->getNameAsString()
           << "\n";
-          
+      }
+      if (!Callee->isDefined()) {
+        // TODO call to implicit function, or smth
+        // Check parameters anyway for any assertion, and throw an error
+        // if they contain one.
+        return true;
+      }
+      // Iterate through parameters passed by caller, check each against
+      // type of VarDecl in Callee.
+      auto cb = Call->arg_begin(), ce = Call->arg_end();
+      auto fb = Callee->param_begin(), fe = Callee->param_end();
+      for (; cb != ce; ++cb, ++fb) {
+        assert(fb != fe &&
+          "Ran out of function parameters, please treat varargs?");
+        auto extractor = ExtractAssertedDRE(const_cast<Expr*>(*cb));
+        if (extractor.found()) {
+          // Does the param have the same kind of attribute?
+          auto parmAttr = Co.getAssertionAttr(*fb);
+          if (!Co.IsSameAssertion(extractor.attr, parmAttr)) {
+            if (extractor.attr) {
+              // TODO
+              // DUBIOUS, how do we get around this in a straightforward manner?
+              // By annotating the TYPES themselves in VarDecl.
+              Co.warnAt(*cb, "dropping assertion on function call, use a cast "
+                             "to silence")
+                << FixItHint::CreateInsertion((*cb)->getLocStart(),
+                     "("+ (*fb)->getType().getAsString() +")");
+              return true;
+            }
+            Co.diagnosticAt(*cb, DiagnosticsEngine::Error,
+              "argument's assertion (%1) doesn't match that of parameter "
+              "'%0' (%2)")
+              << (*fb)->getName()
+              << (extractor.attr ? Co.AssertionKindAsString(extractor.attr)
+                    : "none")
+              << (parmAttr ? Co.AssertionKindAsString(parmAttr) : "none");
+            if (parmAttr) {
+              Co.diagnosticAt(parmAttr, DiagnosticsEngine::Note,
+                "parameter's assertion");
+            }
+          }
+        }
       }
     }
     return true;
   }
-
-private:
-  
 };
 
 class AnnotateVariablesConsumer : public SemaConsumer {
@@ -405,11 +434,51 @@ public:
     SemaPtr = 0;
   }
 
-  virtual void HandleTranslationUnit(clang::ASTContext &Context) {
-    // Traversing the translation unit decl via a RecursiveASTVisitor
-    // will visit all nodes in the AST.
-    Visitor.TraverseDecl(Context.getTranslationUnitDecl());
+  virtual bool HandleTopLevelDecl(DeclGroupRef DG) {
+    for (Decl* D : DG) {
+      // Traversing the translation unit decl via a RecursiveASTVisitor will
+      // visit all nodes in the AST. This will propagate annotations across to
+      // all VarDecls which should have them.
+      // Context->getTopLevelDecl()  no more!
+      Visitor.TraverseDecl(D);
 
+      // Now transform the assignments, if the Decl is a function.
+      // TODO can other Decls contain assignments, e.g. BlockDecl?
+      //   --> can BlockDecl appear outside functions?
+      FunctionDecl* FD;
+      if (!(FD = dyn_cast<FunctionDecl>(D))) {
+        continue;
+      }
+
+      // Decls can go like getContext() => the DeclContext* .
+      //  but does decl_iterator allow changing the children?
+      // they iterate with Decl::getNextDeclInContext(),
+      // how do I transform a Decl and preserve the order?
+      // using llvm::PointerIntPair<Decl *, 2, unsigned> NextInContextAndBits;
+
+      // Stmts have children that apparently can be iterated on
+      //   by reference. But can we actually change that?
+      // Check out StmtIterator.h
+
+      MyTreeTransform Transform(Co, *SemaPtr);
+      SemaPtr->PushFunctionScope();
+      StmtResult Res;
+      {
+        Sema::ContextRAII FuncDeclContext(*SemaPtr, FD);
+        Res = Transform.TransformStmt(FD->getBody());
+      }
+      SemaPtr->PopFunctionScopeInfo();
+      if (Res.isUsable()) {
+        FD->setBody(Res.get());
+      } else {
+        Co.diagnosticAt(FD, DiagnosticsEngine::Fatal,
+          "Couldn't transform function body.");
+      }
+    }
+    return true;
+  }
+
+  virtual void HandleTranslationUnit(clang::ASTContext &Context) {
     if (Context.getDiagnostics().hasErrorOccurred()) {
       // Destroy the AST somehow?
       // Look at ParseAST.cpp - ParseAST(...)
@@ -475,10 +544,10 @@ protected:
     /* Try to poke at ProgramAction to see what action we're doing,
        and ultimately if IRgen happens before our plugin. */
     // Also, where does the simple parsing happening?
-    llvm::errs() << "ProgramAction = " 
+    llvm::errs() << "ProgramAction = "
                  << theFrontendAction(CI.getFrontendOpts().ProgramAction)
                  << "\n";
-    
+
     ASTContext& Context = CI.getASTContext();
     // Let's be smarter! Combine our consumer with an ASTPrinter (from
     // ASTPrintAction) into a MultiplexConsumer.
