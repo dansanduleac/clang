@@ -15,6 +15,9 @@ namespace {
       : public EvaluatedExprVisitor<ReferenceExprExtractor> {
     Common& Co;
     Expr* toVisit;
+    bool multipleAssertedDREFound = false;
+
+    typedef EvaluatedExprVisitor<ReferenceExprExtractor> Base;
   public:
     // We need Common ref to use warnAt, or any other stuff that depends
     // on the ASTContext..
@@ -31,8 +34,7 @@ namespace {
     // UnaryOperators applied to a DeclRefExpr?
 
     // Yup definitely needs to be more tight...
-    // Therefore: 
-
+    // Therefore:
 
     // TODO reimplement void Visit(Expr* E), to not allow visitation unless
     // it's following our required pattern.
@@ -41,37 +43,75 @@ namespace {
       return dre != NULL;
     }
 
-    void VisitDeclRefExpr(DeclRefExpr* DRE) {
-      NamedDecl* orig = DRE->getFoundDecl();
+    void VisitDeclRefExpr(DeclRefExpr *DRE) {
+      NamedDecl *orig = DRE->getFoundDecl();
       //Co.warnAt(orig, "DRE referenced this object");
       if ((attr = Co.getAssertionAttr(orig))) {
         if (dre != NULL) {
-          success = false;
+          multipleAssertedDREFound = true;
           return;
-        } 
+        }
         dre = DRE;
 
         // Some debugging on the type...
-        std::string S; llvm::raw_string_ostream os(S);
         clang::QualType tt = DRE->getType();
-        os << "DRE->getType() == " << tt.getAsString();
-        Co.warnAt(DRE, os.str());
+        // TODO Find the "indirection" on tt, if we even care?
+
+        if (DEBUG) {
+          std::string S; llvm::raw_string_ostream os(S);
+          os << "DRE->getType() == " << tt.getAsString();
+          Co.warnAt(DRE, os.str());
+        }
       }
+    }
+
+    void VisitUnaryAddrOf(UnaryOperator *UO) {
+      // indirection ++;
+      Visit(UO->getSubExpr());
+    }
+
+    void VisitUnaryDeref(UnaryOperator *UO) {
+      // indirection --;
+      Visit(UO->getSubExpr());
+    }
+
+    void Visit(Stmt* S) {
+      if (BinaryOperator *BinOp = dyn_cast<BinaryOperator>(S)) {
+        if (BinOp->isAssignmentOp()) {
+          // then it's ok, continue looking in LHS
+          Base::Visit(BinOp->getLHS());
+        }
+        return;
+      } else if (UnaryOperator *UnOp = dyn_cast<UnaryOperator>(S)) {
+        switch (UnOp->getOpcode()) {
+          case UO_AddrOf:
+          case UO_Deref:
+            Base::Visit(S);
+          default: return;
+        }
+        return;
+      }
+      // TODO remember if there is a cast, and if we find a suitable DRE, warn
+      // that this is unsupported
+
+      // TODO only explicitly allow:
+      // ImplicitCastExpr, DeclRefExpr, ...
+      //   ExplicitCastExpr, for instance, wd be bad to allow... or at least
+      //   force a warning!
+      Base::Visit(S);
     }
 
     void run() {
       Visit(toVisit);
-      if (!success) {
+      if (multipleAssertedDREFound) {
         Co.
         diagnosticAt(toVisit, DiagnosticsEngine::Fatal,
-                     "Found more than 1 DRE inside this Expr");
+                     "found more than 1 asserted DRE inside this Expr");
       }
     }
 
-    DeclRefExpr* dre = NULL;
-    AssertionAttr* attr = NULL;
-    int indirection = 0;
-    bool success = true;
+    DeclRefExpr *dre = NULL;
+    AssertionAttr *attr = NULL;
   };
 
 }
