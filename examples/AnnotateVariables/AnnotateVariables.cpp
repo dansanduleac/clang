@@ -1,5 +1,4 @@
 #include "clang/AST/AST.h"
-#include "clang/AST/ASTMutationListener.h" // temporary?
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Frontend/ASTConsumers.h"             // for CreateASTPrinter
 #include "clang/Frontend/CompilerInstance.h"
@@ -25,15 +24,6 @@ using std::unique_ptr;
 #endif
 
 namespace {
-
-// TODO useful at all?
-class MyMutationListener : public ASTMutationListener {
-  void AddedVisibleDecl(const DeclContext *DC, const Decl *D) override {
-    llvm::errs() << "AddedVisibleDecl: ";
-    D->dump();
-  }
-};
-
 
 class MyTreeTransform : public TreeTransform<MyTreeTransform> {
   typedef TreeTransform<MyTreeTransform> Base;
@@ -97,13 +87,6 @@ public:
     }
   }
   */
-
-  ASTMutationListener *GetASTMutationListener() {
-    return Listener;
-  }
-
-private:
-  ASTMutationListener* Listener = new (*Co.getContext()) MyMutationListener();
 };
 
 
