@@ -114,6 +114,11 @@ void StmtProfiler::VisitAttributedStmt(const AttributedStmt *S) {
   // TODO: maybe visit attributes?
 }
 
+void StmtProfiler::VisitAttributedExpr(const AttributedExpr *E) {
+  VisitExpr(E);
+  // TODO: maybe visit attributes?
+}
+
 void StmtProfiler::VisitIfStmt(const IfStmt *S) {
   VisitStmt(S);
   VisitDecl(S->getConditionVariable());

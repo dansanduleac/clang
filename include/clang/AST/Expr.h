@@ -4722,6 +4722,46 @@ public:
     return child_range(SubExprs, SubExprs+NumSubExprs);
   }
 };
+
+// Similar to ParenExpr, but actually an Expr-revealing proxy to AttributedStmt.
+// TODO consider inheriting from ParenExpr (added bloat,
+// SourceLocations) to avoid copying code?
+class AttributedExpr : public Expr {
+  AttributedStmt AS;  // Holds the attributes and Expr.
+
+  AttributedExpr(SourceLocation attrLoc, ArrayRef<const Attr*> Attrs, Expr* val)
+    : Expr(AttributedExprClass, val->getType(),
+           val->getValueKind(), val->getObjectKind(),
+           val->isTypeDependent(), val->isValueDependent(),
+           val->isInstantiationDependent(),
+           val->containsUnexpandedParameterPack()),
+      AS(attrLoc, Attrs, val) {}
+
+public:
+  static AttributedExpr *Create(ASTContext &C, SourceLocation Loc,
+                                ArrayRef<const Attr*> Attrs,
+                                Expr *SubExpr);
+
+  ArrayRef<const Attr*> getAttrs() const { return AS.getAttrs(); }
+
+  SourceRange getSourceRange() const LLVM_READONLY {
+    return AS.getSourceRange();
+  }
+
+  SourceLocation getAttrLoc() const { return AS.getAttrLoc(); }
+
+  const Expr *getSubExpr() const { return cast<Expr>(AS.getSubStmt()); }
+  Expr *getSubExpr() { return cast<Expr>(AS.getSubStmt()); }
+
+  static bool classof(const Stmt *T) {
+    return T->getStmtClass() == AttributedExprClass;
+  }
+  static bool classof(const AttributedExpr *) { return true; }
+
+  // Iterators
+  child_range children() { return AS.children(); }
+
+};
 }  // end namespace clang
 
 #endif

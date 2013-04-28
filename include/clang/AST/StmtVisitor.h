@@ -111,6 +111,9 @@ public:
   RetTy Visit ## CLASS(PTR(CLASS) S) { DISPATCH(PARENT, PARENT); }
 #include "clang/AST/StmtNodes.inc"
 
+  // Let's test this...
+  // RetTy VisitAttributedExpr(AttributedExpr* S) { DISPATCH(Expr, Expr); }
+
   // If the implementation doesn't implement binary operator methods, fall back
   // on VisitBinaryOperator.
 #define BINOP_FALLBACK(NAME) \

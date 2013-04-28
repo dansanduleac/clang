@@ -1917,6 +1917,9 @@ bool Expr::isUnusedResultAWarning(const Expr *&WarnE, SourceLocation &Loc,
     Loc = getExprLoc();
     R1 = getSourceRange();
     return true;
+  case AttributedExprClass:
+    return cast<AttributedExpr>(this)->getSubExpr()->
+      isUnusedResultAWarning(WarnE, Loc, R1, R2, Ctx);
   case ParenExprClass:
     return cast<ParenExpr>(this)->getSubExpr()->
       isUnusedResultAWarning(WarnE, Loc, R1, R2, Ctx);
@@ -4086,6 +4089,17 @@ AtomicExpr::AtomicExpr(SourceLocation BLoc, ArrayRef<Expr*> args,
 
     SubExprs[i] = args[i];
   }
+}
+
+AttributedExpr *AttributedExpr::Create(ASTContext &C, SourceLocation Loc,
+                                       ArrayRef<const Attr*> Attrs,
+                                       Expr *SubExpr) {
+  // Need to allocate enough space for attributes and AttributedStmt,
+  // sizeof(AttributedExpr) will include the latter.
+  void *Mem = C.Allocate(sizeof(AttributedExpr) +
+                         sizeof(Attr*) * (Attrs.size() - 1),
+                         llvm::alignOf<AttributedExpr>());
+  return new (Mem) AttributedExpr(Loc, Attrs, SubExpr);
 }
 
 unsigned AtomicExpr::getNumSubExprs(AtomicOp Op) {

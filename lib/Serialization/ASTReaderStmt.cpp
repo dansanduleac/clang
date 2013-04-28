@@ -180,6 +180,11 @@ void ASTStmtReader::VisitAttributedStmt(AttributedStmt *S) {
   S->AttrLoc = ReadSourceLocation(Record, Idx);
 }
 
+void ASTStmtReader::VisitAttributedExpr(AttributedExpr *E) {
+  // TODO like above.
+  StmtVisitor<ASTStmtReader, void>::VisitAttributedExpr(E);
+}
+
 void ASTStmtReader::VisitIfStmt(IfStmt *S) {
   VisitStmt(S);
   S->setConditionVariable(Reader.getContext(),

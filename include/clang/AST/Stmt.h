@@ -847,6 +847,8 @@ public:
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == AttributedStmtClass;
   }
+
+  friend class AttributedExpr;
 };
 
 

@@ -1071,6 +1071,16 @@ public:
     return SemaRef.ActOnAttributedStmt(AttrLoc, Attrs, SubStmt);
   }
 
+/// \brief Build a new label expression.
+  ///
+  /// By default, performs semantic analysis to build the new expression.
+  /// Subclasses may override this routine to provide different behavior.
+  ExprResult RebuildAttributedExpr(SourceLocation AttrLoc,
+                                   ArrayRef<const Attr*> Attrs,
+                                   Expr *SubExpr) {
+    return SemaRef.ActOnAttributedExpr(AttrLoc, Attrs, SubExpr);
+  }
+
   /// \brief Build a new "if" statement.
   ///
   /// By default, performs semantic analysis to build the new statement.
@@ -5273,6 +5283,22 @@ TreeTransform<Derived>::TransformAttributedStmt(AttributedStmt *S) {
   return getDerived().RebuildAttributedStmt(S->getAttrLoc(),
                                             S->getAttrs(),
                                             SubStmt.get());
+}
+
+template<typename Derived>
+ExprResult
+TreeTransform<Derived>::TransformAttributedExpr(AttributedExpr *E) {
+  ExprResult SubExpr = getDerived().TransformExpr(E->getSubExpr());
+  if (SubExpr.isInvalid())
+    return ExprError();
+
+  // TODO: transform attributes
+  if (SubExpr.get() == E->getSubExpr() /* && attrs are the same */)
+    return E;
+
+  return getDerived().RebuildAttributedExpr(E->getAttrLoc(),
+                                            E->getAttrs(),
+                                            SubExpr.get());
 }
 
 template<typename Derived>

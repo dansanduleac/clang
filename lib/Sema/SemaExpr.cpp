@@ -2684,6 +2684,14 @@ Sema::BuildDeclarationNameExpr(const CXXScopeSpec &SS,
   }
 }
 
+ExprResult Sema::ActOnAttributedExpr(SourceLocation AttrLoc,
+                                     ArrayRef<const Attr*> Attrs,
+                                     Expr *SubExpr) {
+  // Fill in the declaration and return it.
+  AttributedExpr *LE = AttributedExpr::Create(Context, AttrLoc, Attrs, SubExpr);
+  return Owned(LE);
+}
+
 ExprResult Sema::ActOnPredefinedExpr(SourceLocation Loc, tok::TokenKind Kind) {
   PredefinedExpr::IdentType IT;
 

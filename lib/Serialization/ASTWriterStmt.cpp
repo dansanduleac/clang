@@ -115,6 +115,11 @@ void ASTStmtWriter::VisitAttributedStmt(AttributedStmt *S) {
   Code = serialization::STMT_ATTRIBUTED;
 }
 
+void ASTStmtWriter::VisitAttributedExpr(AttributedExpr *E) {
+  // TODO like above.
+  StmtVisitor<ASTStmtWriter, void>::VisitAttributedExpr(E);
+}
+
 void ASTStmtWriter::VisitIfStmt(IfStmt *S) {
   VisitStmt(S);
   Writer.AddDeclRef(S->getConditionVariable(), Record);

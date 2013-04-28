@@ -2729,6 +2729,10 @@ public:
                                  ArrayRef<const Attr*> Attrs,
                                  Stmt *SubStmt);
 
+  ExprResult ActOnAttributedExpr(SourceLocation AttrLoc,
+                                 ArrayRef<const Attr*> Attrs,
+                                 Expr *SubExpr);
+
   StmtResult ActOnIfStmt(SourceLocation IfLoc,
                          FullExprArg CondVal, Decl *CondVar,
                          Stmt *ThenVal,

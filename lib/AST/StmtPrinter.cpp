@@ -188,6 +188,23 @@ void StmtPrinter::VisitAttributedStmt(AttributedStmt *Node) {
   PrintStmt(Node->getSubStmt(), 0);
 }
 
+void StmtPrinter::VisitAttributedExpr(AttributedExpr *Node) {
+  OS << "[[";
+  bool first = true;
+  for (ArrayRef<const Attr*>::iterator it = Node->getAttrs().begin(),
+                                       end = Node->getAttrs().end();
+                                       it != end; ++it) {
+    if (!first) {
+      OS << ", ";
+      first = false;
+    }
+    // TODO: check this
+    (*it)->printPretty(OS, Context);
+  }
+  OS << "]] ";
+  PrintExpr(Node->getSubExpr());
+}
+
 void StmtPrinter::PrintRawIfStmt(IfStmt *If) {
   OS << "if (";
   if (const DeclStmt *DS = If->getConditionVariableDeclStmt())
