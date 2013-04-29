@@ -77,7 +77,7 @@ public:
 
   template <typename T>
   DiagnosticBuilder warnAt(T* X, StringRef s) {
-    return diagnosticAt(X, DiagnosticsEngine::Warning, s);
+    return diagnosticAt(X, s, DiagnosticsEngine::Warning);
   }
 
 
@@ -85,7 +85,7 @@ public:
   static SourceRange getSourceRange(T&& X, const llvm::false_type&) {
     return X.getSourceRange();
   }
-  
+
   static SourceRange getSourceRange(Attr&& X, const llvm::true_type&) {
     return X.getRange();
   }
@@ -115,17 +115,18 @@ public:
   // For convenience, to highlight an AST node (of type T).
   template <typename T>
   DiagnosticBuilder
-  diagnosticAt(T&& X, DiagnosticsEngine::Level lvl, StringRef str) {
+  diagnosticAt(T&& X, StringRef str,
+               DiagnosticsEngine::Level lvl = DiagnosticsEngine::Error) {
     // All AST node ranges are token ranges from what I know.
     // TODO apart from the SourceLocation needed, we can just << X
     // everything... (making the below function obsolete-ish..)
     return diagnosticAt(CharSourceRange::getTokenRange(getSourceRange(X)),
-                        lvl, str);
+                        str, lvl);
   }
 
   DiagnosticBuilder
-  diagnosticAt(CharSourceRange csr, DiagnosticsEngine::Level lvl,
-                    StringRef str) {
+  diagnosticAt(CharSourceRange csr, StringRef str,
+               DiagnosticsEngine::Level lvl) {
     DiagnosticsEngine &D = Context->getDiagnostics();
     unsigned DiagID = D.getCustomDiagID(lvl, str);
     // << does .AddSourceRange() too!
@@ -199,7 +200,7 @@ public:
     SourceLocation SLoc, ELoc;
     // Confusingly enough, Stmt had getLoc(Start|End), but DeclStmt defines
     // get(Start|End)Loc() as they're passed to DeclStmt in the constructor.
-    
+
     // Can't just use Rewriter->ReplaceStmt() because Rewriter->isRewritable(
     // DS->getStartLoc()) == false, if it's a macro expansion. So get location
     // where expansion occurred (which will be in the source code).
@@ -215,8 +216,8 @@ public:
     llvm::errs() << "Size = " << Size << "\n";
     */
 
-    // TOTO this is a problem if further down we rewrite the initialiser 
-    // contained in this DeclExpr as well... 
+    // TOTO this is a problem if further down we rewrite the initialiser
+    // contained in this DeclExpr as well...
     // How does it figure out the new position of the initialiser btw....
     Rewriter->ReplaceText(SLoc, Size, Str);
   }
@@ -230,7 +231,7 @@ public:
     assert(attr && "Tried to replace AssertionAttr for Decl which has none");
     D->dropAttr<AssertionAttr>();
     // Using placement new. Why allocate another copy when we can reuse.
-    // ASTContext will deallocate it at the end of things. 
+    // ASTContext will deallocate it at the end of things.
     attr = ::new(attr) AssertionAttr(range, *Context, newS);
 
     AddAssertionAttr(DS, D, attr);
@@ -245,13 +246,13 @@ public:
     attr = QualifyAttrReplace(attr);
     AddAssertionAttr(DS, D, attr);
     if (DEBUG) {
-      llvm::errs() << yellow << "Qualified: " << normal 
+      llvm::errs() << yellow << "Qualified: " << normal
                    << attr->getAnnotation() << "\n";
     }
   }
 
   // Just returns a string that represents the qualified AnnotateAttr.
-  // 
+  //
   std::string GetQualifiedAttrString(AnnotateAttr* attr) {
     SmallString<20> an = attr->getAnnotation();
     an.append(",");
@@ -270,7 +271,7 @@ public:
   // Return a new AssertionAttr representing the qualified attr.
   // Does NOT check whether attr already qualified, or not sane.
   AssertionAttr* QualifyAttr(AssertionAttr* attr) {
-    return new(*Context) AnnotateAttr(attr->getRange(), *Context, 
+    return new(*Context) AnnotateAttr(attr->getRange(), *Context,
                                       GetQualifiedAttrString(attr));
   }
 

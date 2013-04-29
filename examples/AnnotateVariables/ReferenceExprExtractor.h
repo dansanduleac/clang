@@ -105,7 +105,7 @@ namespace {
       Visit(toVisit);
       if (multipleAssertedDREFound) {
         Co.
-        diagnosticAt(toVisit, DiagnosticsEngine::Fatal,
+        diagnosticAt(toVisit,
                      "found more than 1 asserted DRE inside this Expr");
       }
     }

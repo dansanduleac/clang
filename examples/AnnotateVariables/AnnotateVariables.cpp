@@ -1,6 +1,6 @@
 #include "clang/AST/AST.h"
 #include "clang/AST/RecursiveASTVisitor.h"
-#include "clang/Frontend/ASTConsumers.h"             // for CreateASTPrinter
+#include "clang/Frontend/ASTConsumers.h"   // for CreateASTPrinter
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Frontend/MultiplexConsumer.h"
@@ -67,8 +67,7 @@ public:
       if (Init) {
         ExprResult E = TransformExpr(Init);
         if (E.isInvalid()) {
-          Co.diagnosticAt(Init, DiagnosticsEngine::Error,
-            "couldn't transform initializer");
+          Co.diagnosticAt(Init, "couldn't transform initializer");
         } else {
           VD->setInit(E.get());
         }
@@ -183,7 +182,7 @@ public:
          TL = TL.getUnqualifiedLoc().getNextTypeLoc()) {
       if (!typ.isConstQualified()) {
         // VD.getLocation() if we want to point to the VD's name.
-        auto builder = Co.diagnosticAt(TL, DiagnosticsEngine::Error, str)
+        auto builder = Co.diagnosticAt(TL, str)
           //<< TL.getSourceRange()
           << FixItHint::CreateInsertion(TL.getLocEnd(), " const");
         // Pass the builder to the optional errorHandling callback.
@@ -251,9 +250,8 @@ public:
         // but we already have an AssertionAttr on our back.
         // This behaviour might change in the future.
         if (attr) {
-          Co.diagnosticAt(attr, DiagnosticsEngine::Error,
-            "initialiser references asserted variable, but already has an "
-            "assertion")
+          Co.diagnosticAt(attr, "initialiser references asserted variable, "
+                                "but already has an assertion")
             << extractor.dre;
           return true;
         }
@@ -266,8 +264,8 @@ public:
                db << extractor.dre->getSourceRange();
             });
         if (query) {
-          Co.diagnosticAt(extractor.attr, DiagnosticsEngine::Note,
-              "the variable's assertion");
+          Co.diagnosticAt(extractor.attr, "the variable's assertion",
+                          DiagnosticsEngine::Note);
           return true;
         }
 
@@ -400,16 +398,15 @@ public:
                      "("+ (*fb)->getType().getAsString() +")");
               return true;
             }
-            Co.diagnosticAt(*cb, DiagnosticsEngine::Error,
-              "argument's assertion (%1) doesn't match that of parameter "
-              "'%0' (%2)")
+            Co.diagnosticAt(*cb, "argument's assertion (%1) doesn't match "
+              "that of parameter '%0' (%2)")
               << (*fb)->getName()
               << (extractor.attr ? Co.AssertionKindAsString(extractor.attr)
                     : "none")
               << (parmAttr ? Co.AssertionKindAsString(parmAttr) : "none");
             if (parmAttr) {
-              Co.diagnosticAt(parmAttr, DiagnosticsEngine::Note,
-                "parameter's assertion");
+              Co.diagnosticAt(parmAttr, "parameter's assertion",
+                DiagnosticsEngine::Note);
             }
           }
         }
@@ -480,8 +477,8 @@ public:
       if (Res.isUsable()) {
         FD->setBody(Res.get());
       } else {
-        Co.diagnosticAt(FD, DiagnosticsEngine::Fatal,
-          "Couldn't transform function body.");
+        Co.diagnosticAt(FD, "Couldn't transform function body.",
+          DiagnosticsEngine::Fatal);
       }
     }
     return true;
@@ -503,20 +500,9 @@ public:
 
     //Rewriter->overwriteChangedFiles();
   }
-
-  /*
-  virtual bool HandleTopLevelDecl(DeclGroupRef DG) {
-    for (DeclGroupRef::iterator i = DG.begin(), e = DG.end(); i != e; ++i) {
-      const Decl *D = *i;
-      if (const NamedDecl *ND = dyn_cast<NamedDecl>(D))
-        llvm::errs() << "top-level-decl: \"" << ND->getNameAsString() << "\"\n";
-    }
-
-    return true;
-  }
-  */
 };
 
+// Taken from ExecuteCompilerInvocation.cpp for debugging.
 llvm::StringRef theFrontendAction(clang::frontend::ActionKind K) {
   using namespace clang::frontend;
   switch (K) {
@@ -552,7 +538,6 @@ protected:
     Rew->setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
     /* Try to poke at ProgramAction to see what action we're doing,
        and ultimately if IRgen happens before our plugin. */
-    // Also, where does the simple parsing happening?
     llvm::errs() << "ProgramAction = "
                  << theFrontendAction(CI.getFrontendOpts().ProgramAction)
                  << "\n";
@@ -560,10 +545,12 @@ protected:
     ASTContext& Context = CI.getASTContext();
     // Let's be smarter! Combine our consumer with an ASTPrinter (from
     // ASTPrintAction) into a MultiplexConsumer.
-    llvm::SmallVector<ASTConsumer*, 2> Consumers;
+    llvm::SmallVector<ASTConsumer*, 3> Consumers;
     Consumers.push_back(
       new AnnotateVariablesConsumer(&Context, move(Rew)));
+
     // And now print the AST!
+    // Emulating ASTPrintAction
     if (raw_ostream *OS = CI.createDefaultOutputFile(false, file)) {
       Consumers.push_back(CreateASTPrinter(OS));
     }
