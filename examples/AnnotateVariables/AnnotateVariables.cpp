@@ -171,7 +171,9 @@ public:
   // Sanitise the type that we are assigning to (VD->getType()).
   // VD->getType() is a  "T " + one or more "*const",
   //      i.e. int *const *const.
-  bool IsDeeplyConstPointer(VarDecl const *VD, StringRef str) {
+  bool IsDeeplyConstPointer(VarDecl const *VD, StringRef str,
+        std::function<void(DiagnosticBuilder)> errorHandling
+            = ([](DiagnosticBuilder) {})) {
     PointerType const *ptrType;
     QualType typ = VD->getType();
     TypeLoc TL = VD->getTypeSourceInfo()->getTypeLoc();
@@ -181,9 +183,11 @@ public:
          TL = TL.getUnqualifiedLoc().getNextTypeLoc()) {
       if (!typ.isConstQualified()) {
         // VD.getLocation() if we want to point to the VD's name.
-        Co.diagnosticAt(TL, DiagnosticsEngine::Error, str)
+        auto builder = Co.diagnosticAt(TL, DiagnosticsEngine::Error, str)
           //<< TL.getSourceRange()
           << FixItHint::CreateInsertion(TL.getLocEnd(), " const");
+        // Pass the builder to the optional errorHandling callback.
+        errorHandling(builder);
         return true;
       }
     }
@@ -256,7 +260,12 @@ public:
 
         // TODO IsDeeplyConstPointer -> functor, allow "returning" the
         // DiagnosticBuilder.
-        if (IsDeeplyConstPointer(VD, "mutable pointer to asserted variable")) {
+        auto query =
+          IsDeeplyConstPointer(VD, "mutable pointer to asserted variable",
+            [&](DiagnosticBuilder db) {
+               db << extractor.dre->getSourceRange();
+            });
+        if (query) {
           Co.diagnosticAt(extractor.attr, DiagnosticsEngine::Note,
               "the variable's assertion");
           return true;
