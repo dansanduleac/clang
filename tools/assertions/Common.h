@@ -1,14 +1,18 @@
 #ifndef ANNOTATEVARIABLES_COMMON_H
 #define ANNOTATEVARIABLES_COMMON_H
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "clang/AST/AST.h"
+#include "clang/Rewrite/Rewriter.h"
+
 #include <new>
 #include <sstream>
 
-namespace {
+namespace assertions {
 
 using namespace clang;
 
@@ -296,6 +300,47 @@ public:
 
 // And I really want this to be available outside:
 typedef Common::AssertionAttr AssertionAttr;
+
+}
+
+namespace llvm {
+
+namespace dont_use {
+  template<typename To> char convertible_to_helper(const volatile To);
+  template<typename To> double convertible_to_helper(...);
+}
+
+template <typename From, typename To>
+struct is_convertible_to {
+  static const bool value
+    = sizeof(char) == sizeof(dont_use::convertible_to_helper<To>( *(From*)0 ));
+};
+
+//     typename llvm::enable_if<is_convertible_to<ArrT, ArrayRef<T>>, int>::type ignore=0
+// template <typename ArrT>
+// std::string join(ArrT Strings, StringRef separator) {
+//   return _join(Strings, separator);
+
+template <typename T>
+typename llvm::enable_if<is_convertible_to<T, StringRef>,
+                         std::string>::type
+join(ArrayRef<T> Strings, StringRef separator) {
+  std::ostringstream Out;
+  bool start = true;
+  for (const T& String : Strings) {
+    if (start)
+      start = false;
+    else
+      Out << separator.str();
+    Out << (std::string) String;
+  }
+  return Out.str();
+}
+
+template <class T>
+std::string join(T Strings, StringRef separator) {
+  return join(makeArrayRef(Strings), separator);
+}
 
 }
 
