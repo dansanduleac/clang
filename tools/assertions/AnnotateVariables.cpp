@@ -1,5 +1,6 @@
 #include "clang/AST/AST.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/CodeGen/CodeGenAction.h"   // for EmitLLVMAction
 #include "clang/Frontend/ASTConsumers.h"   // for CreateASTPrinter
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
@@ -554,6 +555,9 @@ protected:
     if (raw_ostream *OS = CI.createDefaultOutputFile(false, file)) {
       Consumers.push_back(CreateASTPrinter(OS));
     }
+    // And generate LLVM IR.
+    //Consumers.push_back( clang::EmitLLVMAction()
+    //                      .CreateASTConsumer(CI, file) );
     return new MultiplexConsumer(Consumers);
   }
 
