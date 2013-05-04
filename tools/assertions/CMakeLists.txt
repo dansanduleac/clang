@@ -18,7 +18,11 @@ set( LLVM_LINK_COMPONENTS
 
 project(assertions)
 
-add_clang_executable(${PROJECT_NAME} AnnotateVariables.cpp ClangUtils.cpp)
+add_clang_executable(${PROJECT_NAME}
+  main.cpp
+  AnnotateVariables.cpp
+  ClangUtils.cpp
+  )
 
 add_dependencies(${PROJECT_NAME}
   clang-headers

@@ -16,7 +16,7 @@ namespace assertions {
 
 using namespace clang;
 
-bool DEBUG = false;
+extern bool DEBUG;
 
 struct Color {
   raw_ostream::Colors color;

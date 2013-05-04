@@ -1,22 +1,24 @@
-#include "clang/AST/AST.h"
 #include "clang/AST/RecursiveASTVisitor.h"
-#include "clang/CodeGen/CodeGenAction.h"   // for EmitLLVMAction
-#include "clang/Frontend/ASTConsumers.h"   // for CreateASTPrinter
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Frontend/MultiplexConsumer.h"
-#include "clang/Rewrite/Rewriter.h"
 #include "clang/Sema/SemaConsumer.h"
 // This is in "${CLANG_SOURCE_DIR}/lib", mind you.
 #include "Sema/TreeTransform.h"
 
-#include "ClangUtils.h"
 #include "Common.h"
+#include "ClangUtils.h"
 #include "ReferenceExprExtractor.h"
+#include "AnnotateVariablesAction.h"
 
 #include <memory>
 
-using namespace clang;
+using namespace llvm;
+
+using std::string;
+using std::vector;
+
+// TODO replce with llvm::OwningPtr, easier.
 #if LLVM_USE_RVALUE_REFERENCES
 using std::move;
 using std::unique_ptr;
@@ -24,7 +26,7 @@ using std::unique_ptr;
 #pragma error("Nooooo! No rvalue references.")
 #endif
 
-namespace {
+namespace assertions {
 
 class MyTreeTransform : public TreeTransform<MyTreeTransform> {
   typedef TreeTransform<MyTreeTransform> Base;
@@ -531,60 +533,30 @@ llvm::StringRef theFrontendAction(clang::frontend::ActionKind K) {
   return "<<UNKNOWN>>";
 }
 
-class AnnotateVariablesAction : public PluginASTAction {
-protected:
-
-  ASTConsumer *CreateASTConsumer(CompilerInstance &CI, llvm::StringRef file) {
-    auto Rew = unique_ptr<Rewriter>(new Rewriter());
-    Rew->setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
-    /* Try to poke at ProgramAction to see what action we're doing,
-       and ultimately if IRgen happens before our plugin. */
+ASTConsumer *AnnotateVariablesAction::CreateASTConsumer(
+    CompilerInstance &CI, llvm::StringRef file) {
+  auto Rew = unique_ptr<Rewriter>(new Rewriter());
+  Rew->setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
+  // Try to poke at ProgramAction to see what action we're doing.
+  if (DEBUG) {
     llvm::errs() << "ProgramAction = "
                  << theFrontendAction(CI.getFrontendOpts().ProgramAction)
                  << "\n";
-
-    ASTContext& Context = CI.getASTContext();
-    // Let's be smarter! Combine our consumer with an ASTPrinter (from
-    // ASTPrintAction) into a MultiplexConsumer.
-    llvm::SmallVector<ASTConsumer*, 3> Consumers;
-    Consumers.push_back(
-      new AnnotateVariablesConsumer(&Context, move(Rew)));
-
-    // And now print the AST!
-    // Emulating ASTPrintAction
-    if (raw_ostream *OS = CI.createDefaultOutputFile(false, file)) {
-      Consumers.push_back(CreateASTPrinter(OS));
-    }
-    // And generate LLVM IR.
-    //Consumers.push_back( clang::EmitLLVMAction()
-    //                      .CreateASTConsumer(CI, file) );
-    return new MultiplexConsumer(Consumers);
+    llvm::errs() << "FrontendOptions.OutputFile = "
+                 << CI.getFrontendOpts().OutputFile
+                 << "\n";
   }
 
-  bool ParseArgs(const CompilerInstance &CI,
-                 const std::vector<std::string>& args) {
-    for (unsigned i = 0, e = args.size(); i != e; ++i) {
-      llvm::errs() << "AnnotateVariables arg = " << args[i] << "\n";
+  ASTContext& Context = CI.getASTContext();
+  // Let's be smarter! Combine our consumer with an ASTPrinter (from
+  // ASTPrintAction) into a MultiplexConsumer.
+  llvm::SmallVector<ASTConsumer*, 2> Consumers;
+  Consumers.push_back(
+    new AnnotateVariablesConsumer(&Context, move(Rew)));
 
-      if (args[i] == "-d" || args[i] == "--debug") {
-        DEBUG = true;
-      }
-    }
-    if (args.size() && args[0] == "help")
-      PrintHelp(llvm::errs());
-
-    return true;
-  }
-
-  void PrintHelp(llvm::raw_ostream& ros) {
-    ros << "Help for AnnotateVariables plugin goes here\n";
-  }
-
-};
-
+  // And now the MultiplexConsumer belonging to the WrappedAction.
+  Consumers.push_back(WrapperFrontendAction::CreateASTConsumer(CI, file));
+  return new MultiplexConsumer(Consumers);
 }
 
-static FrontendPluginRegistry::Add<AnnotateVariablesAction>
-X("annotate-vars", "Try to obtain the transitive closure of variable annotations over variables being assigned to.");
-
-// vim:sw=2
+}
