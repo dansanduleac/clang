@@ -5,7 +5,7 @@
 
 #include "Common.h"
 
-namespace {
+namespace assertions {
 
   using namespace clang;
 
