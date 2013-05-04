@@ -174,7 +174,9 @@ static FrontendAction *CreateFrontendAction(CompilerInstance &CI) {
   return Act;
 }
 
-bool clang::ExecuteCompilerInvocation(CompilerInstance *Clang) {
+bool clang::ExecuteCompilerInvocation(
+    CompilerInstance *Clang,
+    WrapperFrontendActionFactory* WrapperFactory) {
   // Honor -help.
   if (Clang->getFrontendOpts().ShowHelp) {
     OwningPtr<driver::OptTable> Opts(driver::createDriverOptTable());
@@ -231,6 +233,10 @@ bool clang::ExecuteCompilerInvocation(CompilerInstance *Clang) {
     return false;
   // Create and execute the frontend action.
   OwningPtr<FrontendAction> Act(CreateFrontendAction(*Clang));
+  if (WrapperFactory && Act) {
+    // WrapperFrontendAction takes ownership of wrapped FrontendAction.
+    Act.reset( WrapperFactory->create( Act.take() ) );
+  }
   if (!Act)
     return false;
   bool Success = Clang->ExecuteAction(*Act);

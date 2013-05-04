@@ -15,15 +15,26 @@
 #ifndef LLVM_CLANG_FRONTENDTOOL_UTILS_H
 #define LLVM_CLANG_FRONTENDTOOL_UTILS_H
 
+#include "clang/Frontend/FrontendAction.h"
+
 namespace clang {
 
 class CompilerInstance;
+
+class WrapperFrontendActionFactory {
+public:
+  virtual ~WrapperFrontendActionFactory() {}
+
+  virtual clang::WrapperFrontendAction *create(FrontendAction *Wrapped) = 0;
+};
 
 /// ExecuteCompilerInvocation - Execute the given actions described by the
 /// compiler invocation object in the given compiler instance.
 ///
 /// \return - True on success.
-bool ExecuteCompilerInvocation(CompilerInstance *Clang);
+bool ExecuteCompilerInvocation(
+	CompilerInstance *Clang,
+	WrapperFrontendActionFactory* WrapperFactory = nullptr);
 
 }  // end namespace clang
 
