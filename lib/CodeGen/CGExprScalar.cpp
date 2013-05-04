@@ -171,6 +171,58 @@ public:
   Value *VisitParenExpr(ParenExpr *PE) {
     return Visit(PE->getSubExpr()); 
   }
+  Value *VisitAttributedExpr(AttributedExpr *AE) {
+    // This type was introduced only for annotating modifications to variables
+    // (BinAssign, or Unary increments/decrements). To figure out the result
+    // value to include with the annotation (probably an RValue), clear the
+    // IgnoreResultAssign flag, otherwise these functions (VisitBinAssign,
+    // VisitUnary.*(Inc|Dec), return nullptr.
+    bool Ignore = TestAndClearIgnoreResultAssign();
+    // In the case of BinAssign, it will be the RHS.
+    // FIXME do we actually care about the LValue of the assigned?
+    Expr *SE = AE->getSubExpr();
+    LValue LHS;
+    // Unfortunately this copies a bit of code from VisitBinAssign and
+    // VisitUnary.*(Inc|Dec).
+    switch (SE->getStmtClass()) {
+      default:
+        llvm_unreachable("AttributedExpr wraps incompatible Expr");
+      case Expr::BinaryOperatorClass: {
+        BinaryOperator *bo = cast<BinaryOperator>(SE);
+        if (bo->isAssignmentOp()) {
+          LHS = EmitCheckedLValue(bo->getLHS());
+        }
+        break;
+      }
+      case Expr::UnaryOperatorClass: {
+        UnaryOperator *uo = cast<UnaryOperator>(SE);
+        if (uo->isIncrementDecrementOp()) {
+          LHS = EmitLValue(uo->getSubExpr());
+        }
+        break;
+      }
+      case Expr::CallExprClass:
+        // Also allow function calls, because we might want to tag a function
+        // call, to check the tracked variables that were passed afterwards.
+        break;
+    }
+    // TODO add a intrinsics function that we can actually take this value
+    // as a parameter.
+    Value *V = Visit(AE->getSubExpr());
+    // TODO this doesn't always work, if !isSimple() for instnace.. how to
+    // treat the other cases???
+    Value *LV = LHS.getAddress();
+    if (!LV) {
+      // If we don't have an address (it's a CallExpr), just put a null value
+      // instead.
+      LV = EmitNullValue(AE->getType());
+    }
+    CGF.EmitExprAnnotations(AE, LV);
+    if (Ignore) {
+      return 0;
+    }
+    return V;
+  }
   Value *VisitSubstNonTypeTemplateParmExpr(SubstNonTypeTemplateParmExpr *E) {
     return Visit(E->getReplacement()); 
   }

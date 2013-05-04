@@ -1426,6 +1426,20 @@ void CodeGenFunction::EmitVarAnnotations(const VarDecl *D, llvm::Value *V) {
                        (*ai)->getAnnotation(), D->getLocation());
 }
 
+void CodeGenFunction::EmitExprAnnotations(const AttributedExpr *E,
+                                          llvm::Value *V) {
+  const AnnotateAttr *anno;
+  for (const Attr *attr : E->getAttrs()) {
+    if ((anno = dyn_cast<AnnotateAttr>(attr))) {
+      // TODO move this to a new intrinsic instead of var_annotation
+      // to make intent obvious.
+      EmitAnnotationCall(CGM.getIntrinsic(llvm::Intrinsic::var_annotation),
+                         Builder.CreateBitCast(V, CGM.Int8PtrTy, V->getName()),
+                         anno->getAnnotation(), E->getAttrLoc());
+    }
+  }
+}
+
 llvm::Value *CodeGenFunction::EmitFieldAnnotations(const FieldDecl *D,
                                                    llvm::Value *V) {
   assert(D->hasAttr<AnnotateAttr>() && "no annotate attribute");

@@ -2343,6 +2343,7 @@ public:
   LValue EmitNullInitializationLValue(const CXXScalarValueInitExpr *E);
   LValue EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *E);
   LValue EmitOpaqueValueLValue(const OpaqueValueExpr *e);
+  LValue EmitAttributedExprLValue(const AttributedExpr *E);
 
   RValue EmitRValueForField(LValue LV, const FieldDecl *FD);
 
@@ -2726,6 +2727,9 @@ public:
 
   /// Emit local annotations for the local variable V, declared by D.
   void EmitVarAnnotations(const VarDecl *D, llvm::Value *V);
+
+  /// Emit local annotations for the AttributedExpr E.
+  void EmitExprAnnotations(const AttributedExpr *E, llvm::Value *V);
 
   /// Emit field annotations for the given field & value. Returns the
   /// annotation result.

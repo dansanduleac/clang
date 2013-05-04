@@ -948,6 +948,9 @@ LValue CodeGenFunction::EmitLValue(const Expr *E) {
 
   case Expr::MaterializeTemporaryExprClass:
     return EmitMaterializeTemporaryExpr(cast<MaterializeTemporaryExpr>(E));
+
+  case Expr::AttributedExprClass:
+    return EmitAttributedExprLValue(cast<AttributedExpr>(E));
   }
 }
 
@@ -2278,6 +2281,18 @@ static const Expr *isSimpleArrayDecayOperand(const Expr *E) {
     return 0;
   
   return SubExpr;
+}
+
+// FIXME Do we ever find an AttributedExpr as a LValue?
+LValue CodeGenFunction::EmitAttributedExprLValue(const AttributedExpr *E) {
+  LValue LV = EmitLValue(E->getSubExpr());
+  // Emit annotations.
+  if (LV.isSimple()) {
+    llvm::Value *V = LV.getAddress();
+    EmitExprAnnotations(E, V);
+  } else
+    llvm_unreachable("AttributedExprLValue not simple, untreated case");
+  return LV;
 }
 
 LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
