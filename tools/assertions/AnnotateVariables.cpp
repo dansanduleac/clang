@@ -211,11 +211,20 @@ public:
   // VISITORS
   // -------------------------------------------------
 
-  // TODO what about int *x = new int;   or even with a parameter
+  bool VisitFunctionDecl(FunctionDecl *FD) {
+    AssertionAttr* attr = Co.getAssertionAttr(FD);
+    if (attr == nullptr)
+      return true;
+    // We allow any function return type, except void.
+    if (FD->getResultType().getTypePtr()->isVoidType()) {
+      Co.diagnosticAt(FD, "asserted function cannot return void");
+      return false;
+    }
+    Co.QualifyAttrReplace(attr);
+    return true;
+  }
 
   bool VisitVarDecl(VarDecl* VD) {
-    // TODO foreach decl that is a VarDecl (if there are multiple)
-
     raw_ostream &e = llvm::errs();
     if (DEBUG) {
       e << yellow << "VarDecl" << normal
@@ -284,11 +293,8 @@ public:
 
     // If we were annotated, and no annotations were inherited from
     // the initializer.
-    if (attr) {
-      // Assign a unique ID. The Decl will now point to the "new" one
-      // because it's been created at the same location.
+    if (attr)
       Co.QualifyAttrReplace(attr);
-    }
     return true;
   }
 
