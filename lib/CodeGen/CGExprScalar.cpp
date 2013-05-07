@@ -171,6 +171,7 @@ public:
   Value *VisitParenExpr(ParenExpr *PE) {
     return Visit(PE->getSubExpr()); 
   }
+
   Value *VisitAttributedExpr(AttributedExpr *AE) {
     // This type was introduced only for annotating modifications to variables
     // (BinAssign, or Unary increments/decrements). To figure out the result
@@ -179,7 +180,9 @@ public:
     // VisitUnary.*(Inc|Dec), return nullptr.
     bool Ignore = TestAndClearIgnoreResultAssign();
     // In the case of BinAssign, it will be the RHS.
-    // FIXME do we actually care about the LValue of the assigned?
+
+    // We actually care about the LValue (the assigned-to), because this gives
+    // us a quick way of detecting its new value, by doing a load.
     Expr *SE = AE->getSubExpr();
     LValue LHS;
     // Unfortunately this copies a bit of code from VisitBinAssign and
@@ -217,12 +220,13 @@ public:
       // instead.
       LV = EmitNullValue(AE->getType());
     }
-    CGF.EmitExprAnnotations(AE, LV);
+    CGF.EmitAssignAnnotations(AE, LV);
     if (Ignore) {
       return 0;
     }
     return V;
   }
+
   Value *VisitSubstNonTypeTemplateParmExpr(SubstNonTypeTemplateParmExpr *E) {
     return Visit(E->getReplacement()); 
   }

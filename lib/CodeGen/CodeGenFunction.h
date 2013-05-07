@@ -2728,8 +2728,10 @@ public:
   /// Emit local annotations for the local variable V, declared by D.
   void EmitVarAnnotations(const VarDecl *D, llvm::Value *V);
 
-  /// Emit local annotations for the AttributedExpr E.
-  void EmitExprAnnotations(const AttributedExpr *E, llvm::Value *V);
+  /// Emit local annotations for the assignment to V contained in E.
+  /// TODO add extra parameter indicating (ref of) new value.
+  /// This would only work on a simple type like int, 
+  void EmitAssignAnnotations(const AttributedExpr *E, llvm::Value *V);
 
   /// Emit field annotations for the given field & value. Returns the
   /// annotation result.

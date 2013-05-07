@@ -2289,7 +2289,7 @@ LValue CodeGenFunction::EmitAttributedExprLValue(const AttributedExpr *E) {
   // Emit annotations.
   if (LV.isSimple()) {
     llvm::Value *V = LV.getAddress();
-    EmitExprAnnotations(E, V);
+    EmitAssignAnnotations(E, V);
   } else
     llvm_unreachable("AttributedExprLValue not simple, untreated case");
   return LV;
