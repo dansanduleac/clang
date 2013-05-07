@@ -75,6 +75,11 @@ namespace assertions {
       Visit(UO->getSubExpr());
     }
 
+    /// Called for PostInc, PostDec, PreInc, PreDec
+    void VisitUnaryAssignment(UnaryOperator *UO) {
+      Visit(UO->getSubExpr());
+    }
+
     void Visit(Stmt* S) {
       if (BinaryOperator *BinOp = dyn_cast<BinaryOperator>(S)) {
         if (BinOp->isAssignmentOp()) {
@@ -83,21 +88,28 @@ namespace assertions {
         }
         return;
       } else if (UnaryOperator *UnOp = dyn_cast<UnaryOperator>(S)) {
-        switch (UnOp->getOpcode()) {
-          case UO_AddrOf:
-          case UO_Deref:
-            Base::Visit(S);
-          default: return;
-        }
+        // Are we a unary modifying argument?
+        // (UO_PostInc, UO_PostDec, UO_PreInc, UO_PreDec)
+        if (UnOp->isIncrementDecrementOp()) {
+          VisitUnaryAssignment(UnOp);
+        } else
+          switch (UnOp->getOpcode()) {
+            case UO_AddrOf:
+            case UO_Deref:
+              Base::Visit(S);
+            default: return;
+          }
         return;
       }
-      // TODO remember if there is a cast, and if we find a suitable DRE, warn
-      // that this is unsupported
-
-      // TODO only explicitly allow:
-      // ImplicitCastExpr, DeclRefExpr, ...
-      //   ExplicitCastExpr, for instance, wd be bad to allow... or at least
-      //   force a warning!
+      switch (S->getStmtClass()) {
+        case Expr::ImplicitCastExprClass:
+        case Expr::DeclRefExprClass:
+        case Expr::ParenExprClass:
+          break;
+        case Expr::CStyleCastExprClass:
+        default:
+          return; // Ignore!
+      }
       Base::Visit(S);
     }
 

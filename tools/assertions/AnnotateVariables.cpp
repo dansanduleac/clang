@@ -85,63 +85,67 @@ public:
     }
   }
 
-  ExprResult TransformAssertedAssignment(BinaryOperator* bo,
+  ExprResult TransformAssertedAssignment(Expr* assignment,
       ReferenceExprExtractor& extractor) {
     const clang::Attr* attrs[] = {
       // TODO this shouldn't call getAnnotation() directly,
       // should be some intermediary doing the AssertionAttr cloning
       // (with a different indirection info too, maybe).
-      new (getSema().Context) AnnotateAttr(bo->getSourceRange(),
+      new (getSema().Context) AnnotateAttr(assignment->getSourceRange(),
               getSema().Context, extractor.attr->getAnnotation())
     };
 
     ExprResult Res = Base::RebuildAttributedExpr(
-        bo->getExprLoc(), attrs, bo);
+        assignment->getExprLoc(), attrs, assignment);
     return Res;
   }
 
-  /// TODO also treat Unary assignment operators (prefix ++, --).
-
-  /// \brief If it assigns to a tracked variable, will wrap in an
+  /// \brief If it's a modifying operator (++/--), will wrap in an
   /// AttributedExpr.
-  ExprResult TransformBinaryOperator(BinaryOperator* bo) {
-    // TODO start with "normal case", error handle, use the
-    // transformed BinaryOperator for further logic.
-    if (bo->isAssignmentOp()) {
-      Expr* lhs = bo->getLHS();
-
-      ReferenceExprExtractor extractor(getSema().Context, Co, lhs);
+  ExprResult TransformUnaryOperator(UnaryOperator* UO) {
+    ExprResult Transformed = Base::TransformUnaryOperator(UO);
+    assert(!Transformed.isInvalid() && "Couldn't transform operator");
+    if (UO->isIncrementDecrementOp()) {
+      Expr* lvalue = UO->getSubExpr();
+      ReferenceExprExtractor extractor(getSema().Context, Co, lvalue);
       extractor.run();
 
       if (extractor.found()) {
         // extractor.getNewAnnotations --> pass to fct below
         if (DEBUG) {
-          Co.warnAt(bo, "will be transformed");
+          Co.warnAt(UO, "will be transformed");
         }
-        return TransformAssertedAssignment(bo, extractor);
+        return TransformAssertedAssignment(UO, extractor);
       }
     }
     // Normal Case
-    return Base::TransformBinaryOperator(bo);
+    return Transformed;
   }
 
-  // TODO
-  // Aside from BinaryOperator, also check function calls that pass
-  // asserted variables, and call TransformAssertedAssignment on them too.
+  /// \brief If it assigns to a tracked variable, will wrap in an
+  /// AttributedExpr.
+  ExprResult TransformBinaryOperator(BinaryOperator* BO) {
+    ExprResult Transformed = Base::TransformBinaryOperator(BO);
+    assert(!Transformed.isInvalid() && "Couldn't transform operator");
+    if (BO->isAssignmentOp()) {
+      Expr* lvalue = BO->getLHS();
+      ReferenceExprExtractor extractor(getSema().Context, Co, lvalue);
+      extractor.run();
 
-  /*
-  void transformAttrs(Decl *Old, Decl *New) {
-    llvm::errs() << "transformAttrs called with: ";
-    Old->dump();
-    New->dump();
-    llvm::errs() << "\n";
-    // Guarantees that if it returns an attr, it is sane.
-    AssertionAttr* attr = Co.getAssertionAttr(Old);
-    if (attr) {
-      New->addAttr(Co.QualifyAttr(attr));
+      if (extractor.found()) {
+        // extractor.getNewAnnotations --> pass to fct below
+        if (DEBUG) {
+          Co.warnAt(BO, "will be transformed");
+        }
+        return TransformAssertedAssignment(Transformed.get(), extractor);
+      }
     }
+    // Normal Case
+    return Transformed;
   }
-  */
+
+  // TODO Also check function calls that pass asserted variables, and call
+  // TransformAssertedAssignment on them too.
 };
 
 
