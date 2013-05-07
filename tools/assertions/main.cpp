@@ -306,14 +306,18 @@ int main(int argc, char const **argv) {
 
   //llvm::errs() << theFrontendAction(Clang->getFrontendOpts().ProgramAction) << "\n";
 
-
-  class MyFactory : public WrapperFrontendActionFactory {
-    WrapperFrontendAction *create(FrontendAction *Wrapped) override {
-      return new AnnotateVariablesAction(Wrapped);
-    }
-  } Factory;
-  // Execute the frontend actions.
-  Success = ExecuteCompilerInvocation(Clang.get(), &Factory);
+  // TODO this following section is all that differs compared to cc1_main.cpp:main
+  // We should push this functionality to a custom ExecuteCompilerInvocation
+  {
+    class MyFactory : public WrapperFrontendActionFactory {
+      WrapperFrontendAction *create(FrontendAction *Wrapped) override {
+        return new AnnotateVariablesAction(Wrapped);
+      }
+    } Factory;
+    // Execute the frontend actions.
+    Success = ExecuteCompilerInvocation(Clang.get(), &Factory);
+  }
+  // END section
 
   // If any timers were active but haven't been destroyed yet, print their
   // results now.  This happens in -disable-free mode.
