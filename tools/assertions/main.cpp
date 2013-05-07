@@ -26,7 +26,8 @@
 
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/ManagedStatic.h"    // llvm_shutdown
+#include "llvm/Support/ManagedStatic.h"    // llvm_shutdown(_obj)?
+#include "llvm/Support/Signals.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -59,95 +60,6 @@ llvm::sys::Path GetExecutablePath(const char *Argv0) {
   return llvm::sys::Path::GetMainExecutable(Argv0, MainAddr);
 }
 
-// So much code duplication from Tooling.cpp :(
-
-/*
-
-// FIXME: This file contains structural duplication with other parts of the
-// code that sets up a compiler to run tools on it, and we should refactor
-// it to be based on the same framework.
-
-/// \brief Builds a clang driver initialized for running clang tools.
-static clang::driver::Driver *newDriver(clang::DiagnosticsEngine *Diagnostics,
-                                        StringRef BinaryName) {
-  const std::string DefaultOutputName = "a.out";
-  clang::driver::Driver *CompilerDriver = new clang::driver::Driver(
-    BinaryName, llvm::sys::getDefaultTargetTriple(),
-    DefaultOutputName, false, *Diagnostics);
-  CompilerDriver->setTitle("clang_based_tool");
-  return CompilerDriver;
-}
-
-/// \brief Retrieves the clang CC1 specific flags out of the compilation's jobs.
-///
-/// Returns NULL on error.
-static const clang::driver::ArgStringList *getCC1Arguments(
-    clang::DiagnosticsEngine *Diagnostics,
-    clang::driver::Compilation *Compilation) {
-  // We expect to get back exactly one Command job, if we didn't something
-  // failed. Extract that job from the Compilation.
-  const clang::driver::JobList &Jobs = Compilation->getJobs();
-  if (Jobs.size() != 1 || !isa<clang::driver::Command>(*Jobs.begin())) {
-    llvm::SmallString<256> error_msg;
-    llvm::raw_svector_ostream error_stream(error_msg);
-    Compilation->PrintJob(error_stream, Compilation->getJobs(), "; ", true);
-    Diagnostics->Report(clang::diag::err_fe_expected_compiler_job)
-        << error_stream.str();
-    return NULL;
-  }
-
-  // The one job we find should be to invoke clang again.
-  const clang::driver::Command *Cmd =
-      cast<clang::driver::Command>(*Jobs.begin());
-  if (StringRef(Cmd->getCreator().getName()) != "clang") {
-    Diagnostics->Report(clang::diag::err_fe_expected_clang_command);
-    return NULL;
-  }
-
-  return &Cmd->getArguments();
-}
-
-/// \brief Returns a clang build invocation initialized from the CC1 flags.
-static clang::CompilerInvocation *newInvocation(
-    clang::DiagnosticsEngine *Diagnostics,
-    const clang::driver::ArgStringList &CC1Args) {
-  assert(!CC1Args.empty() && "Must at least contain the program name!");
-  clang::CompilerInvocation *Invocation = new clang::CompilerInvocation;
-  clang::CompilerInvocation::CreateFromArgs(
-      *Invocation, CC1Args.data() + 1, CC1Args.data() + CC1Args.size(),
-      *Diagnostics);
-  Invocation->getFrontendOpts().DisableFree = false;
-  return Invocation;
-}
-
-
-static bool runTool(clang::driver::ArgStringList& Argv) {
-  // BinaryName was taken from Argv[0] before
-  std::string BinaryName = GetExecutablePath("clang_tool").str();
-  // From ToolInvocation::run()
-  DiagnosticOptions DefaultDiagnosticOptions;
-  TextDiagnosticPrinter DiagnosticPrinter(
-      llvm::errs(), DefaultDiagnosticOptions);
-  DiagnosticsEngine Diagnostics(llvm::IntrusiveRefCntPtr<clang::DiagnosticIDs>(
-      new DiagnosticIDs()), &DiagnosticPrinter, false);
-
-  // newDriver!
-  const llvm::OwningPtr<clang::driver::Driver> Driver(
-      newDriver(&Diagnostics, BinaryName));
-  const llvm::OwningPtr<clang::driver::Compilation> Compilation(
-      Driver->BuildCompilation(makeArrayRef(Argv)));
-  const clang::driver::ArgStringList *const CC1Args = getCC1Arguments(
-      &Diagnostics, Compilation.get());
-  if (CC1Args == NULL) {
-    return false;
-  }
-  llvm::OwningPtr<clang::CompilerInvocation> Invocation(
-      newInvocation(&Diagnostics, *CC1Args));
-  return runInvocation(BinaryName, Compilation.get(), Invocation.take(),
-                       *CC1Args);
-}
-*/
-
 ArrayRef<const char *> ExtractCompilationArgs(
       int &argc, char const **argv /*, char const *BinaryName*/) {
   // Load C11 arguments after "--".
@@ -174,6 +86,9 @@ static void LLVMErrorHandler(void *UserData, const std::string &Message) {
 }
 
 int main(int argc, char const **argv) {
+  sys::PrintStackTraceOnErrorSignal();
+  llvm::PrettyStackTraceProgram X(argc, argv);
+
   clang::driver::ArgStringList args(argv, argv + argc);
   // Add a preprocessor definition to indicate we're doing assertions parsing.
   args.push_back("-D");
@@ -189,9 +104,6 @@ int main(int argc, char const **argv) {
 
   cl::extrahelp MoreHelp("\nMore help text...");
 
-  // llvm::OwningPtr<CompilationDatabase> Compilations(
-  //   FixedCompilationDatabase::loadFromCommandLine(argc, argv));
-
   void *MainAddr = (void*) (intptr_t) GetExecutablePath;
   std::string BinaryName = GetExecutablePath(argv[0]).str();
   auto Args = ExtractCompilationArgs(argc, argv);
@@ -199,29 +111,6 @@ int main(int argc, char const **argv) {
   cl::ParseCommandLineOptions(argc, argv);
   // Set the global DEBUG var from the cmdline flag.
   DEBUG = Debug;
-
-  // XXX
-  // CI.getFrontendOpts()    --> FrontendOptions
-  // when FrontendOptions is created, ProgramAction = frontend::ParseSyntaxOnly.
-
-
-  // XXX ToolInvocation approach:
-
-  // // CompilationArgs : ArrayRef<std::string>
-  // llvm::OwningPtr<FrontendActionFactory> Factory(
-  //   newFrontendActionFactory<AnnotateVariablesAction>());
-  // FileManager Files((FileSystemOptions()));
-  // ToolInvocation Invocation(CompilationArgs,
-  //   Factory->create(), &Files);
-  // Invocation.run();
-
-  // ---- Doesn't work because it enforces that only 1 job would run.
-
-  // XXX clang-interpreter/main.cpp approach:
-
-  // DiagnosticOptions DiagOpts;
-  // TextDiagnosticPrinter *DiagClient =
-  //   new TextDiagnosticPrinter(llvm::errs(), DiagOpts);
 
   OwningPtr<CompilerInstance> Clang(new CompilerInstance());
   IntrusiveRefCntPtr<DiagnosticIDs> DiagID(new DiagnosticIDs());
@@ -336,16 +225,9 @@ int main(int argc, char const **argv) {
     return !Success;
   }
 
-  // Managed static deconstruction. Useful for making things like
-  // -time-passes usable.
-  llvm::llvm_shutdown();
+  llvm_shutdown();
 
   return !Success;
-
-  // Create and execute the frontend to generate an LLVM bitcode module.
-  // OwningPtr<CodeGenAction> Act(new EmitLLVMOnlyAction());
-  // if (!Clang.ExecuteAction(*Act))
-  //   return 1;
 }
 
 // vim:sw=2
