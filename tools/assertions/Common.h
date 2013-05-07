@@ -1,6 +1,8 @@
 #ifndef ANNOTATEVARIABLES_COMMON_H
 #define ANNOTATEVARIABLES_COMMON_H
 
+#include "StringJoin.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
@@ -138,6 +140,7 @@ public:
   }
 
 
+  // -------------------------------------------------
   // MY CUSTOM ATTRIBUTE
   // -------------------------------------------------
   // TODO:
@@ -151,13 +154,11 @@ public:
     Qualified
   };
 
-  // There will be a different Visitor for each translation unit, but we do
-  // not need globally unique UIDs. Each translation unit can have its own set
-  // of UIDs, but the programmer will have to be consistent with assertion
-  // annotations.
-  // TODO
-  // If such an annotated variable is passed to an un-annotated, or differently
-  // annotated function, a warning will be issued.
+  // There will be a different Visitor for each translation unit, but that's
+  // ok because we do not need globally unique UIDs. Each translation unit
+  // will have its own set of UIDs, and their mappings to the run-time
+  // structures holding the asserted variables' states are maintained
+  // internally per TU.
   int uid = 1;
 
   // Cache for our unpacked attribute data, in this case the getAnnotation() split
@@ -170,12 +171,12 @@ public:
   template <typename T>
   static AssertionAttr* getAssertionAttr(T* obj) {
     AssertionAttr* attr = obj->template getAttr<AssertionAttr>();
-    return attr && IsSaneAssertionAttr(attr) ? attr : NULL;
+    return attr && IsSaneAssertionAttr(attr) ? attr : nullptr;
   }
 
   template <typename T>
   static bool hasAssertionAttr(T* obj) {
-    return getAssertionAttr(obj) != NULL;
+    return getAssertionAttr(obj) != nullptr;
   }
 
   // To check if this Attr is in a sane state, representing a correct AssertionAttr.
@@ -186,87 +187,32 @@ public:
     return attr->getAnnotation().startswith(GLOBAL_PREFIX);
   }
 
-  void AddAssertionAttr(DeclStmt* DS, Decl* D, AssertionAttr* attr) {
-    D->addAttr(attr);
-
-    // Rewrite the source code.
-
-    // Obtain the replacement string, Str (by printPretty'ing the Stmt).
-    std::string Str = Rewriter->ConvertToString(DS);
-    if (DEBUG) {
-      llvm::errs() << red << "Rewriting DeclStmt: " << normal << Str << "\n";
-      warnAt(DS, " <--- old DeclStmt");
-    }
-
-    // TODO just rewrite the Decl... not the entire Stmt
-
-    SourceManager& SM = Context->getSourceManager();
-    SourceLocation SLoc, ELoc;
-    // Confusingly enough, Stmt had getLoc(Start|End), but DeclStmt defines
-    // get(Start|End)Loc() as they're passed to DeclStmt in the constructor.
-
-    // Can't just use Rewriter->ReplaceStmt() because Rewriter->isRewritable(
-    // DS->getStartLoc()) == false, if it's a macro expansion. So get location
-    // where expansion occurred (which will be in the source code).
-    SLoc = SM.getExpansionLoc(DS->getStartLoc());
-    ELoc = SM.getExpansionLoc(DS->getEndLoc());
-
-    //diagnosticAt(CharSourceRange::getTokenRange(SourceRange(SLoc, ELoc)),
-    //  DiagnosticsEngine::Warning, "ExpandedLocation");
-    int Size = Rewriter->getRangeSize(SourceRange(SLoc, ELoc));
-    /*
-    llvm::errs() << "Rewriter->isRewritable(...) == "
-                 << Rewriter->isRewritable(SLoc) << "\n";
-    llvm::errs() << "Size = " << Size << "\n";
-    */
-
-    // TOTO this is a problem if further down we rewrite the initialiser
-    // contained in this DeclExpr as well...
-    // How does it figure out the new position of the initialiser btw....
-    Rewriter->ReplaceText(SLoc, Size, Str);
-  }
-
-  // TODO change to use something more high-level than a string (as the new
-  // value). DeclStmt used only for Rewriter to have a Stmt to replace
-  // (otherwise we could have done this in VarDecl.
-  /*
-  void ReplaceAssertionAttr(DeclStmt* DS, Decl* D, llvm::StringRef newS) {
-    AssertionAttr* attr = D->getAttr<AssertionAttr>();
-    assert(attr && "Tried to replace AssertionAttr for Decl which has none");
-    D->dropAttr<AssertionAttr>();
-    // Using placement new. Why allocate another copy when we can reuse.
-    // ASTContext will deallocate it at the end of things.
-    attr = ::new(attr) AssertionAttr(range, *Context, newS);
-
-    AddAssertionAttr(DS, D, attr);
-  }
-  */
-
   // Adds UID to the attribute, by replacing the original attribute object.
+  // FIXME with AddAssertionAttr removed, we don't need DS passed anymore.
+  // (that was only for the Rewriter)
   void QualifyDeclInPlace(DeclStmt* DS, Decl* D, AssertionAttr* attr) {
     assert(IsSaneAssertionAttr(attr) &&
       "Tried to replace AssertionAttr for Decl which has none");
     D->dropAttr<AssertionAttr>();
     attr = QualifyAttrReplace(attr);
-    AddAssertionAttr(DS, D, attr);
     if (DEBUG) {
       llvm::errs() << yellow << "Qualified: " << normal
                    << attr->getAnnotation() << "\n";
     }
   }
 
-  // Just returns a string that represents the qualified AnnotateAttr.
-  //
+  // Returns a string that represents the qualified AnnotateAttr's annotation.
   std::string GetQualifiedAttrString(AnnotateAttr* attr) {
-    SmallString<20> an = attr->getAnnotation();
+    // TODO also pass an ArrayRef to specify additional "parameters"
+    SmallString<30> an = attr->getAnnotation();
     an.append(",");
     llvm::raw_svector_ostream S(an);
     S << uid++;
     return S.str();
   }
 
-  // Qualifies an existing attr like QualifyAttr, but replaces the original
-  // attr.
+  // Qualifies an existing attr with an unique ID like QualifyAttr, but
+  // replaces the original attr in memory.
   AssertionAttr* QualifyAttrReplace(AssertionAttr* attr) {
     return ::new(attr) AssertionAttr(attr->getRange(), *Context,
                                      GetQualifiedAttrString(attr));
@@ -279,7 +225,7 @@ public:
                                       GetQualifiedAttrString(attr));
   }
 
-  bool IsSameAssertion(AssertionAttr* a1, AssertionAttr* a2) {
+  static bool IsSameAssertion(AssertionAttr* a1, AssertionAttr* a2) {
     if (a1 == nullptr || a2 == nullptr) {
       return a1 == nullptr && a2 == nullptr;
     }
@@ -290,57 +236,15 @@ public:
     return Arr1 == Arr2;
   }
 
-  StringRef AssertionKindAsString(AssertionAttr* attr) {
+  static StringRef AssertionKindAsString(AssertionAttr* attr) {
     SmallVector<StringRef, 3> Arr;
     attr->getAnnotation().split(Arr, ",", 2);
-    assert(Arr[0] == "assertion");
+    assert(Arr[0] == "assertion" && "Not an assertion attribute");
     return Arr[1];
   }
 };
 
-// And I really want this to be available outside:
 typedef Common::AssertionAttr AssertionAttr;
-
-}
-
-namespace llvm {
-
-namespace dont_use {
-  template<typename To> char convertible_to_helper(const volatile To);
-  template<typename To> double convertible_to_helper(...);
-}
-
-template <typename From, typename To>
-struct is_convertible_to {
-  static const bool value
-    = sizeof(char) == sizeof(dont_use::convertible_to_helper<To>( *(From*)0 ));
-};
-
-//     typename llvm::enable_if<is_convertible_to<ArrT, ArrayRef<T>>, int>::type ignore=0
-// template <typename ArrT>
-// std::string join(ArrT Strings, StringRef separator) {
-//   return _join(Strings, separator);
-
-template <typename T>
-typename llvm::enable_if<is_convertible_to<T, StringRef>,
-                         std::string>::type
-join(ArrayRef<T> Strings, StringRef separator) {
-  std::ostringstream Out;
-  bool start = true;
-  for (const T& String : Strings) {
-    if (start)
-      start = false;
-    else
-      Out << separator.str();
-    Out << (std::string) String;
-  }
-  return Out.str();
-}
-
-template <class T>
-std::string join(T Strings, StringRef separator) {
-  return join(makeArrayRef(Strings), separator);
-}
 
 }
 
