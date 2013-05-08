@@ -85,33 +85,8 @@ static void LLVMErrorHandler(void *UserData, const std::string &Message) {
   exit(1);
 }
 
-int main(int argc, char const **argv) {
-  sys::PrintStackTraceOnErrorSignal();
-  llvm::PrettyStackTraceProgram X(argc, argv);
-
-  clang::driver::ArgStringList args(argv, argv + argc);
-  // Add a preprocessor definition to indicate we're doing assertions parsing.
-  args.push_back("-D");
-  args.push_back("__ASSERTIONS_ANALYSER__");
-
-  // Change argc and argv to refer to the vector's memory.
-  // The CompilationDatabase will modify these, so we shouldn't pass in
-  // args.data() directly.
-  argc = (int) args.size();
-  assert((size_t) argc == args.size());    // check for overflow
-
-  argv = args.data();
-
-  cl::extrahelp MoreHelp("\nMore help text...");
-
+int my_cc1_main(ArrayRef<const char *> Args, const char *Argv0) {
   void *MainAddr = (void*) (intptr_t) GetExecutablePath;
-  std::string BinaryName = GetExecutablePath(argv[0]).str();
-  auto Args = ExtractCompilationArgs(argc, argv);
-
-  cl::ParseCommandLineOptions(argc, argv);
-  // Set the global DEBUG var from the cmdline flag.
-  DEBUG = Debug;
-
   OwningPtr<CompilerInstance> Clang(new CompilerInstance());
   IntrusiveRefCntPtr<DiagnosticIDs> DiagID(new DiagnosticIDs());
 
@@ -177,7 +152,7 @@ int main(int argc, char const **argv) {
   if (Clang->getHeaderSearchOpts().UseBuiltinIncludes &&
       Clang->getHeaderSearchOpts().ResourceDir.empty())
     Clang->getHeaderSearchOpts().ResourceDir =
-      CompilerInvocation::GetResourcesPath(argv[0], MainAddr);
+      CompilerInvocation::GetResourcesPath(Argv0, MainAddr);
 
   // Create the actual diagnostics engine.
   Clang->createDiagnostics(Args.size(), Args.data());
@@ -228,6 +203,35 @@ int main(int argc, char const **argv) {
   llvm_shutdown();
 
   return !Success;
+}
+
+int main(int argc, char const **argv) {
+  sys::PrintStackTraceOnErrorSignal();
+  llvm::PrettyStackTraceProgram X(argc, argv);
+
+  clang::driver::ArgStringList args(argv, argv + argc);
+  // Add a preprocessor definition to indicate we're doing assertions parsing.
+  args.push_back("-D");
+  args.push_back("__ASSERTIONS_ANALYSER__");
+
+  // Change argc and argv to refer to the vector's memory.
+  // The CompilationDatabase will modify these, so we shouldn't pass in
+  // args.data() directly.
+  argc = (int) args.size();
+  assert((size_t) argc == args.size());    // check for overflow
+
+  argv = args.data();
+
+  cl::extrahelp MoreHelp("\nMore help text...");
+
+  std::string BinaryName = GetExecutablePath(argv[0]).str();
+  auto Args = ExtractCompilationArgs(argc, argv);
+
+  cl::ParseCommandLineOptions(argc, argv);
+  // Set the global DEBUG var from the cmdline flag.
+  DEBUG = Debug;
+
+  return my_cc1_main(Args, argv[0]);
 }
 
 // vim:sw=2
