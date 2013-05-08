@@ -18,14 +18,6 @@ using namespace llvm;
 using std::string;
 using std::vector;
 
-// TODO replce with llvm::OwningPtr, easier.
-#if LLVM_USE_RVALUE_REFERENCES
-using std::move;
-using std::unique_ptr;
-#else
-#pragma error("Nooooo! No rvalue references.")
-#endif
-
 namespace assertions {
 
 class MyTreeTransform : public TreeTransform<MyTreeTransform> {
@@ -431,7 +423,7 @@ public:
 
 class AnnotateVariablesConsumer : public SemaConsumer {
   ASTContext* Context;
-  unique_ptr<Rewriter> Rewriter;
+  OwningPtr<Rewriter> Rewriter;
   Common Co;
   Sema* SemaPtr = nullptr;
   // A RecursiveASTVisitor implementation.
@@ -440,8 +432,8 @@ class AnnotateVariablesConsumer : public SemaConsumer {
 public:
   // TODO: change rewriter to be a OwningPtr<Rewriter>
   explicit AnnotateVariablesConsumer(ASTContext* Context,
-      unique_ptr<class Rewriter>&& rewriter)
-    : SemaConsumer(), Context(Context), Rewriter(move(rewriter)),
+                                     class Rewriter *rewriter)
+    : SemaConsumer(), Context(Context), Rewriter(rewriter),
       Co(Context, Rewriter.get()),
       Visitor(Co, Context, SemaPtr, Rewriter.get()) {}
 
@@ -545,7 +537,7 @@ llvm::StringRef theFrontendAction(clang::frontend::ActionKind K) {
 
 ASTConsumer *AnnotateVariablesAction::CreateASTConsumer(
     CompilerInstance &CI, llvm::StringRef file) {
-  auto Rew = unique_ptr<Rewriter>(new Rewriter());
+  OwningPtr<Rewriter> Rew(new Rewriter());
   Rew->setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
   // Try to poke at ProgramAction to see what action we're doing.
   if (DEBUG) {
@@ -562,7 +554,7 @@ ASTConsumer *AnnotateVariablesAction::CreateASTConsumer(
   // ASTPrintAction) into a MultiplexConsumer.
   llvm::SmallVector<ASTConsumer*, 2> Consumers;
   Consumers.push_back(
-    new AnnotateVariablesConsumer(&Context, move(Rew)));
+    new AnnotateVariablesConsumer(&Context, Rew.take()));
 
   // And now the MultiplexConsumer belonging to the WrappedAction.
   Consumers.push_back(WrapperFrontendAction::CreateASTConsumer(CI, file));
