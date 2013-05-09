@@ -193,7 +193,7 @@ public:
       case Expr::BinaryOperatorClass: {
         BinaryOperator *bo = cast<BinaryOperator>(SE);
         if (bo->isAssignmentOp()) {
-          LHS = EmitCheckedLValue(bo->getLHS());
+          LHS = EmitCheckedLValue(bo->getLHS(), CodeGenFunction::TCK_Store);
         }
         break;
       }

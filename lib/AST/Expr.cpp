@@ -2823,6 +2823,7 @@ bool Expr::HasSideEffects(const ASTContext &Ctx) const {
     return true;
 
   case ParenExprClass:
+  case AttributedExprClass:
   case ArraySubscriptExprClass:
   case MemberExprClass:
   case ConditionalOperatorClass:

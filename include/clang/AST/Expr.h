@@ -4753,6 +4753,9 @@ public:
   const Expr *getSubExpr() const { return cast<Expr>(AS.getSubStmt()); }
   Expr *getSubExpr() { return cast<Expr>(AS.getSubStmt()); }
 
+  SourceLocation getLocStart() const LLVM_READONLY { return AS.getLocStart(); }
+  SourceLocation getLocEnd() const LLVM_READONLY { return AS.getLocEnd(); }
+
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == AttributedExprClass;
   }
