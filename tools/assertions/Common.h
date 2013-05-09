@@ -9,7 +9,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "clang/AST/AST.h"
-#include "clang/Rewrite/Rewriter.h"
+#include "clang/Rewrite/Core/Rewriter.h"
 
 #include <new>
 #include <sstream>

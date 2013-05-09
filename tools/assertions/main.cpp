@@ -4,18 +4,16 @@
 #include "llvm/Support/CommandLine.h"
 // #include "llvm/Support/PathV1.h"           // for GetMainExecutable
 // for getDefaultTargetTriple, replace it with?..
-#include "llvm/Support/Host.h"
+// #include "llvm/Support/Host.h"
 
 // Why not these... meh never used in cc1_main either! FIXME remove
 // #include "clang/Driver/Arg.h"
 // #include "clang/Driver/ArgList.h"
-// #include "clang/Driver/Options.h"
 // #include "clang/Driver/DriverDiagnostic.h"
 // #include "clang/Driver/OptTable.h"
-#include "clang/Driver/Driver.h"           // main() but remove?
-#include "clang/Driver/Tool.h"
- // includes llvm/Support/Path, clang/Driver/Job. FIXME needed?
-#include "clang/Driver/Compilation.h"
+// #include "clang/Driver/Options.h"
+// llvm/Option/Option.h also acceptable for this
+#include "clang/Driver/Util.h" // ArgStringList
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/CompilerInvocation.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
@@ -25,13 +23,13 @@
 #include "clang/FrontendTool/Utils.h" // ExecuteCompilerInvocation
 
 #include "llvm/ADT/Statistic.h"
+#include "llvm/LinkAllPasses.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/ManagedStatic.h"    // llvm_shutdown(_obj)?
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/LinkAllPasses.h"
 
 using namespace assertions;
 using namespace clang;
@@ -76,13 +74,20 @@ ArrayRef<const char *> ExtractCompilationArgs(
   return CompilationArgs;
 }
 
-static void LLVMErrorHandler(void *UserData, const std::string &Message) {
+static void LLVMErrorHandler(void *UserData, const std::string &Message,
+                             bool GenCrashDiag) {
   DiagnosticsEngine &Diags = *static_cast<DiagnosticsEngine*>(UserData);
 
   Diags.Report(diag::err_fe_error_backend) << Message;
 
-  // We cannot recover from llvm errors.
-  exit(1);
+    // Run the interrupt handlers to make sure any special cleanups get done, in
+  // particular that we remove files registered with RemoveFileOnSignal.
+  llvm::sys::RunInterruptHandlers();
+
+  // We cannot recover from llvm errors.  When reporting a fatal error, exit
+  // with status 70 to generate crash diagnostics.  For BSD systems this is
+  // defined as an internal software error.  Otherwise, exit with status 1.
+  exit(GenCrashDiag ? 70 : 1);
 }
 
 int my_cc1_main(ArrayRef<const char *> Args, const char *Argv0) {
@@ -98,8 +103,9 @@ int my_cc1_main(ArrayRef<const char *> Args, const char *Argv0) {
 
   // Buffer diagnostics from argument parsing so that we can output them using a
   // well formed diagnostic object.
+  IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts = new DiagnosticOptions();
   TextDiagnosticBuffer *DiagsBuffer = new TextDiagnosticBuffer;
-  DiagnosticsEngine Diags(DiagID, DiagsBuffer);
+  DiagnosticsEngine Diags(DiagID, &*DiagOpts, DiagsBuffer);
 
   bool Success;
 
@@ -155,7 +161,7 @@ int my_cc1_main(ArrayRef<const char *> Args, const char *Argv0) {
       CompilerInvocation::GetResourcesPath(Argv0, MainAddr);
 
   // Create the actual diagnostics engine.
-  Clang->createDiagnostics(Args.size(), Args.data());
+  Clang->createDiagnostics();
   if (!Clang->hasDiagnostics())
     return 1;
 

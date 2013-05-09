@@ -7,7 +7,6 @@
 #include "Sema/TreeTransform.h"
 
 #include "Common.h"
-#include "ClangUtils.h"
 #include "ReferenceExprExtractor.h"
 #include "AnnotateVariablesAction.h"
 
