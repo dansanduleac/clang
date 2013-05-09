@@ -21,7 +21,6 @@ project(assertions)
 add_clang_executable(${PROJECT_NAME}
   main.cpp
   AnnotateVariables.cpp
-  ClangUtils.cpp
   )
 
 add_dependencies(${PROJECT_NAME}
