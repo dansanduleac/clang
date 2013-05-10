@@ -231,6 +231,7 @@ public:
     }
     SmallVector<StringRef, 3> Arr1, Arr2;
     // Only compare the first 2 elements of each.
+    // TODO modify this for assertions which can take parameters
     a1->getAnnotation().split(Arr1, ",", 2); Arr1.resize(2);
     a2->getAnnotation().split(Arr2, ",", 2); Arr2.resize(2);
     return Arr1 == Arr2;

@@ -61,7 +61,7 @@ public:
       if (Init) {
         ExprResult E = TransformExpr(Init);
         if (E.isInvalid()) {
-          Co.diagnosticAt(Init, "couldn't transform initializer");
+          llvm_unreachable("couldn't transform initializer");
         } else {
           VD->setInit(E.get());
         }
@@ -83,7 +83,7 @@ public:
       // should be some intermediary doing the AssertionAttr cloning
       // (with a different indirection info too, maybe).
       new (getSema().Context) AnnotateAttr(assignment->getSourceRange(),
-              getSema().Context, extractor.attr->getAnnotation())
+              getSema().Context, extractor.getAttr()->getAnnotation())
     };
 
     ExprResult Res = Base::RebuildAttributedExpr(
@@ -98,7 +98,8 @@ public:
     assert(!Transformed.isInvalid() && "Couldn't transform operator");
     if (UO->isIncrementDecrementOp()) {
       Expr* lvalue = UO->getSubExpr();
-      ReferenceExprExtractor extractor(getSema().Context, Co, lvalue);
+      ReferenceExprExtractor extractor(Co, lvalue,
+          /*checkIfUnaryUpdate*/true);
       extractor.run();
 
       if (extractor.found()) {
@@ -120,7 +121,7 @@ public:
     assert(!Transformed.isInvalid() && "Couldn't transform operator");
     if (BO->isAssignmentOp()) {
       Expr* lvalue = BO->getLHS();
-      ReferenceExprExtractor extractor(getSema().Context, Co, lvalue);
+      ReferenceExprExtractor extractor(Co, lvalue);
       extractor.run();
 
       if (extractor.found()) {
@@ -149,6 +150,12 @@ class AnnotateVariablesVisitor
   // Therefore, reference.
   Sema*& SemaPtr;
   Rewriter* Rewriter;
+  // Remember the asserted VarDecls that are references (pointers), because
+  // we're going to come back at the end, and remove their assertion
+  // attribute. We are using @llvm.var.annotation to indicate when to allocate
+  // a new assertion structure, and for pointers, that doesn't apply.
+  SmallVector<VarDecl *, 20> ReferenceDecls;
+
   typedef Common::AssertionAttr AssertionAttr;
 
 public:
@@ -156,14 +163,19 @@ public:
     Sema*& SemaPtr, class Rewriter* R)
     : Co(C), Context(Context), SemaPtr(SemaPtr), Rewriter(R) {}
 
-  /*
-  bool VisitDecl(Decl* D) {
-    llvm::errs() << yellow << D->getDeclKindName() << ":\n" << normal;
-    D->dump();
-    llvm::errs() << "\n";
-    return true;
+  ~AnnotateVariablesVisitor() {
+    // Just in case.
+    cleanup();
   }
-  */
+
+  // Remove attrs from the VarDecls which inherited them automatically by
+  // acting as references to other asserted vars.
+  void cleanup() {
+    for (VarDecl *VD : ReferenceDecls) {
+      VD->dropAttr<AssertionAttr>();
+    }
+    ReferenceDecls.clear();
+  }
 
   // Sanitise the type that we are assigning to (VD->getType()).
   // VD->getType() is a  "T " + one or more "*const",
@@ -185,16 +197,16 @@ public:
           << FixItHint::CreateInsertion(TL.getLocEnd(), " const");
         // Pass the builder to the optional errorHandling callback.
         errorHandling(builder);
-        return true;
+        return false;
       }
     }
-    return false;
+    return true;
   }
 
   // Just a convenience method for using ReferenceExprExtractor to try and
   // find a DRE that refers to an asserted variable.
   ReferenceExprExtractor ExtractAssertedDRE(Expr *E) {
-    ReferenceExprExtractor extractor(*Context, Co, E);
+    ReferenceExprExtractor extractor(Co, E);
     extractor.run();
     return extractor;
   }
@@ -220,70 +232,100 @@ public:
     if (DEBUG) {
       e << yellow << "VarDecl" << normal
         << " at " << Co.printLoc(VD) << ": \""
-        << VD->getName() << "\" [ ";
+        << VD->getName() << "\":\n";
       VD->dump();
-      e << " ]\n";
+      e << "\n";
     }
 
     AssertionAttr* attr = Co.getAssertionAttr(VD);
-    // TODO
-    // if VD has an assertion, make sure that pointers are const, or error
-    // (don't want to assign something to it later).
+    // If VD has an assertion, make sure ALL pointers are const, or error
+    // (don't want to allow assigning to it later because we're statically
+    // assuming that the value accessible by this pointer is going to be
+    // asserted in this way).
+
+    // "int *const", and "int *const *const" are deeply-const types, but
+    // "int **const a" is not (can do *a = ...).
     QualType typ = VD->getType();
     bool isPtr = isa<PointerType>(typ.getTypePtr());
     if (attr && isPtr) {
-      if (IsDeeplyConstPointer(VD,
+      if (!IsDeeplyConstPointer(VD,
             "asserted variable must be a deeply const pointer")) {
-        return true;
+        return false;
       }
     }
 
-    // Deal with initialisation ("assertion stealing").
-
-    if (Expr* Init = VD->getInit()) {
-      auto extractor = ExtractAssertedDRE(Init);
-      // Esure that we are a pointer, otherwise we don't care.
-
-      // extractor.found() returns true if (DRE found in Init)->getFoundDecl()
-      // is asserted, and correctly addressed (using only deref / addrOf
-      // operations in front of it).
-
-      if (isPtr && extractor.found()) {
-        // TODO in ReferenceExprExtractor: indirection should be the sum
-        // between the DRE type indirection (count '*') and our indirection
-        // referring to it.
-
-        // Raise an error if we found a reference to another assertion,
-        // but we already have an AssertionAttr on our back.
-        // This behaviour might change in the future.
-        if (attr) {
-          Co.diagnosticAt(attr, "initialiser references asserted variable, "
-                                "but already has an assertion")
-            << extractor.dre;
+    if (isPtr) {
+      Expr *Init = VD->getInit();
+      bool isParm = isa<ParmVarDecl>(VD);
+      // When it's a normal pointer (not a function parameter), don't allow
+      // manually specifying an assertion on it. The only case this would be
+      // useful would be to hint to the compiler that the value at a certain
+      // address should be asserted, but then we'd have to inject runtime
+      // checks to figure out which asserted variable state we should match it
+      // to (which UID).
+      if (attr) {
+        if (!isParm) {
+          Co.diagnosticAt(VD, "not allowed to specify assertion on pointer "
+              "type, unless function parameter");
+          return false;
+        }
+        // XXX C function parameters can't have initialisers, useless.
+         else if (Init) {
+          Co.diagnosticAt(VD, "can't init asserted function parameter");
           return true;
         }
-
-        // TODO IsDeeplyConstPointer -> functor, allow "returning" the
-        // DiagnosticBuilder.
-        auto query =
-          IsDeeplyConstPointer(VD, "mutable pointer to asserted variable",
-            [&](DiagnosticBuilder db) {
-               db << extractor.dre->getSourceRange();
-            });
-        if (query) {
-          Co.diagnosticAt(extractor.attr, "the variable's assertion",
-                          DiagnosticsEngine::Note);
-          return true;
-        }
-
-        // Everything's OK, qualify VD with stolen assertion.
-        VD->addAttr(extractor.attr);
-        return true;
       }
-    }
+      // If we're a pointer in a block of code (i.e. in a DeclStmt), deal with
+      // initialisation ("assertion stealing").
+      if (!isParm) {
+        // Since it's a const, it can't possibly not have an init (in C).
+        // TODO what if inside a structure though? The init will be somewhere else.
+        assert(Init);
+        auto extractor = ExtractAssertedDRE(Init);
 
-    // If we were annotated, and no annotations were inherited from
-    // the initializer.
+        if (extractor.found()) {
+          // Raise an error if we found a reference to another assertion,
+          // but we already have an AssertionAttr on our back.
+          // This behaviour might change in the future.
+          if (attr) {
+            Co.diagnosticAt(attr, "initialiser references asserted variable, "
+                                  "but already has an assertion")
+              << extractor.getDRE();
+            return true;
+          }
+
+          auto query =
+            IsDeeplyConstPointer(VD, "mutable pointer to asserted variable",
+              [&](DiagnosticBuilder db) {
+                 db << extractor.getDRE()->getSourceRange();
+              });
+          if (!query) {
+            Co.diagnosticAt(extractor.getAttr(), "the variable's assertion",
+                            DiagnosticsEngine::Note);
+            return true;
+          }
+
+          // Everything's OK, qualify VD with stolen assertion.
+          VD->addAttr(extractor.getAttr());
+          return true;
+        }
+      } // end !isParm
+      else {
+        // state var shd be called: %assertions.state_<UID>_
+        // parameters shd be called %assertions.state_<UID>_ directly
+        auto *FD = dyn_cast<FunctionDecl>(VD->getDeclContext());
+        assert(FD && "ParmVarDecl's DeclContext is not a FunctionDecl");
+        // Annotate the function with information regarding the asserted
+        // parameter. Also, skip creating UIDs -- last stage -- unless the
+        // function is DEFINED! (otherwise just do the FuncParmInfo
+        // annotations but skip UIDs)
+        // TODO!!!
+        //FuncParmInfo[FD].append();
+       }
+       // Remember to remove VD's llvm.var.annotation either way.
+        ReferenceDecls.push_back(VD);
+    }   // end isPtr
+
     if (attr)
       Co.QualifyAttrReplace(attr);
     return true;
@@ -291,94 +333,27 @@ public:
 
   // This is for some serious debugging, basically to show the entire Stmt
   // class hierarchy of each Stmt.
+  /*
   bool VisitStmt(Stmt* S) {
     auto &e = llvm::errs();
-    //NamedDecl* orig = dre->getFoundDecl();
-    //ValueDecl* me = dre->getDecl();
-    // TODO: mark this dre->getDecl() with the attributes of dre->getFoundDecl().
     if (DEBUG) {
-      e << yellow << ">>> Stmt" << normal << " at " << Co.printLoc(S) << " ";
       S->dump();
-        // ": \""
-        // << dre->getDecl()->getName() << "\" " << blue << "referencing " << normal
-        // << printLoc(orig) << " ";
-    }
-    return true;
-  }
-
-  /*
-  bool VisitBinaryOperator(BinaryOperator* bo) {
-    if (bo->isAssignmentOp()) {
-      Expr* lhs = bo->getLHS();
-
-      // lhs's level of derefs must match the DeclRefExpr's level of
-      // references.
-
-      auto sourceRange = bo->getSourceRange();
-      // Possibly: use ClangUtils.h, getStmtRangeWithSemicolon,
-      // if we want a sourceRange including semicolon.
-
-      ReferenceExprExtractor extractor(*Context, Co, lhs);
-      // why does VisitStmt sometimes not find the DRE....
-      extractor.run();
-
-      // Maybe: use type of lhs vs type of DeclRefExpr ...
-
-      if (!extractor.found()) {
-        return true;
-      }
-
-      const clang::Attr* attrs[] = {
-        // TODO this shouldn't call getAnnotation() directly,
-        // should be some intermediary doing the AssertionAttr cloning
-        // (with a different indirection info too).
-        new (*Context) AnnotateAttr(sourceRange, *Context,
-                                    extractor.attr->getAnnotation())
-      };
-
-      AttributedStmt* wrapper = AttributedStmt::Create(
-          *Context, bo->getExprLoc(), attrs, bo);
-
-      if (DEBUG) {
-        llvm::errs() << magenta << "Wrapped Text: " << normal;
-        // Get the new text.
-        llvm::errs() << Rewriter->ConvertToString(bo);
-        llvm::errs() << "\n";
-        Co.warnAt(bo, "operator=");
-        llvm::errs() << magenta << "Wrapper: " << normal;
-        llvm::errs() << Rewriter->ConvertToString(wrapper);
-        llvm::errs() << "\n";
-
-        llvm::errs() << red << "Actually replacing:\n" << normal;
-        int Size = Rewriter->getRangeSize(
-          CharSourceRange::getTokenRange(bo->getSourceRange()));
-        Co.warnAt(bo, "<--- this");
-      }
-      // Use Rewriter::ReplaceStmt to replace this with an AttributedStmt.
-      Rewriter->ReplaceStmt(bo, wrapper);
     }
     return true;
   }
   */
 
   /// Ensure that parameters in function calls don't lose their assertion when
-  /// passed, unless explicitly requested by user.  It is allowed for regular
-  /// passed values and even pointers (for now) to become asserted inside the
-  /// function.
-  /// TODO Consider issuing a warning when passing a regular pointer to a
-  /// function that will assert its value.
+  /// passed, unless explicitly requested by user.  It's forbidden for a value
+  /// to become asserted inside the function when it is passed by address.
+  /// That would make it ambiguous whether to allocate a control structure or
+  /// not: yes for regular value, but no for already-asserted value.
   bool VisitCallExpr(CallExpr const *Call) {
     if (FunctionDecl const *Callee = Call->getDirectCallee()) {
       if (DEBUG) {
         llvm::errs() << yellow << "Call to " << normal
           << Callee->getNameAsString()
           << "\n";
-      }
-      if (!Callee->isDefined()) {
-        // TODO call to implicit function, or smth
-        // Check parameters anyway for any assertion, and throw an error
-        // if they contain one.
-        return true;
       }
       // Iterate through parameters passed by caller, check each against
       // type of VarDecl in Callee.
@@ -387,33 +362,40 @@ public:
       for (; cb != ce; ++cb, ++fb) {
         assert(fb != fe &&
           "Ran out of function parameters, please treat varargs?");
+        // Only run this analysis if the ParmVarDecl is a pointer-type.
+        bool isPtrParm = isa<PointerType>((*fb)->getType().getTypePtr());
+        if (!isPtrParm) {
+          continue;
+        }
         auto extractor = ExtractAssertedDRE(const_cast<Expr*>(*cb));
-        if (extractor.found()) {
-          // Does the param have the same kind of attribute?
-          auto parmAttr = Co.getAssertionAttr(*fb);
-          if (!Co.IsSameAssertion(extractor.attr, parmAttr)) {
-            if (extractor.attr) {
-              // TODO
-              // DUBIOUS, how do we get around this in a straightforward manner?
-              // By annotating the TYPES themselves in VarDecl.
-              Co.warnAt(*cb, "dropping assertion on function call, use a cast "
-                             "to silence")
-                << FixItHint::CreateInsertion((*cb)->getLocStart(),
-                     "("+ (*fb)->getType().getAsString() +")");
-              return true;
-            }
-            Co.diagnosticAt(*cb, "argument's assertion (%1) doesn't match "
-              "that of parameter '%0' (%2)")
-              << (*fb)->getName()
-              << (extractor.attr ? Co.AssertionKindAsString(extractor.attr)
-                    : "none")
-              << (parmAttr ? Co.AssertionKindAsString(parmAttr) : "none");
-            if (parmAttr) {
-              Co.diagnosticAt(parmAttr, "parameter's assertion",
-                DiagnosticsEngine::Note);
-            }
+        extractor.run();
+        // Does the param have the same kind of attribute?
+        auto parmAttr = Co.getAssertionAttr(*fb);
+        auto argAttr  = extractor.getAttr();
+        if (!Co.IsSameAssertion(argAttr, parmAttr)) {
+          if (argAttr && !parmAttr) {
+            // FIXME
+            // DUBIOUS, how do we get around this in a straightforward manner?
+            // By annotating the TYPES themselves in VarDecl.
+            Co.warnAt(*cb, "dropping assertion on function call, use a cast "
+                           "to silence")
+              << FixItHint::CreateInsertion((*cb)->getLocStart(),
+                   "("+ (*fb)->getType().getAsString() +")");
+            continue;
+          }
+          Co.diagnosticAt(*cb, "argument's assertion (%1) doesn't match "
+            "that of parameter '%0' (%2)")
+            << (*fb)->getName()
+            << (argAttr ? "'" + Twine(Co.AssertionKindAsString(argAttr)) + "'"
+                        : "none").str()
+            << (parmAttr ? "'" + Twine(Co.AssertionKindAsString(parmAttr)) + "'"
+                        : "none").str();
+          if (parmAttr) {
+            Co.diagnosticAt(parmAttr, "parameter's assertion",
+              DiagnosticsEngine::Note);
           }
         }
+      
       }
     }
     return true;
@@ -445,7 +427,7 @@ public:
   }
 
   virtual bool HandleTopLevelDecl(DeclGroupRef DG) {
-    for (Decl* D : DG) {
+    for (Decl *D : DG) {
       // Traversing the translation unit decl via a RecursiveASTVisitor will
       // visit all nodes in the AST. This will propagate annotations across to
       // all VarDecls which should have them.
@@ -455,7 +437,7 @@ public:
       // Now transform the assignments, if the Decl is a function.
       // TODO can other Decls contain assignments, e.g. BlockDecl?
       //   --> can BlockDecl appear outside functions?
-      FunctionDecl* FD;
+      FunctionDecl *FD;
       if (!(FD = dyn_cast<FunctionDecl>(D))) {
         continue;
       }
@@ -489,20 +471,12 @@ public:
   }
 
   virtual void HandleTranslationUnit(clang::ASTContext &Context) {
-    if (Context.getDiagnostics().hasErrorOccurred()) {
-      // Destroy the AST somehow?
-      // Look at ParseAST.cpp - ParseAST(...)
-      // Actually no need.. ParseAST doesn't do that either, it just carries
-      // on..
-    }
-
-    // Print out the rewritten contents.
-
-    // const RewriteBuffer *RewriteBuf =
-    //     Rewriter->getRewriteBufferFor(Context.getSourceManager().getMainFileID());
-    // llvm::outs() << std::string(RewriteBuf->begin(), RewriteBuf->end());
-
-    //Rewriter->overwriteChangedFiles();
+    // Cleanup unwanted VarDecl annotations, but only AFTER the Transform
+    // has run (it depends on those to annotate the assignments).
+    // Actually moved all the way here because we are now removing attrs from
+    // ParmVarDecl too, but we need those to persist until we finish with the
+    // TU.
+    Visitor.cleanup();
   }
 };
 
