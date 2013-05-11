@@ -44,7 +44,7 @@ static const Color yellow = raw_ostream::YELLOW;
 static const Color savedColor = raw_ostream::SAVEDCOLOR;
 
 
-const llvm::StringRef GLOBAL_PREFIX = "assertion";
+const llvm::StringRef GLOBAL_PREFIX = "assertion,";
 
 class Common {
   ASTContext* Context;
@@ -140,18 +140,20 @@ public:
 
 
   // -------------------------------------------------
-  // MY CUSTOM ATTRIBUTE
+  // THE ATTRIBUTE
   // -------------------------------------------------
   // TODO:
   // Update these to actually use a custom attribute, not just AnnotateAttr,
-  // because that's quite inflexible.
+  // because this is quite inflexible. That would require modifying the
+  // accepted input language, though.
 
   typedef AnnotateAttr AssertionAttr;
 
-  enum Assertion {
-    Initial,
-    Qualified
-  };
+  // Map holding the function parameter assertions for pointer params. We
+  // don't want to allow them to remain attached to the ParmVarDecls because
+  // then they get codegen'd, and we only want to codegen annotations where
+  // we need to initialize state.
+  llvm::DenseMap<ParmVarDecl *, AssertionAttr *> ParmAttrMap;
 
   // There will be a different Visitor for each translation unit, but that's
   // ok because we do not need globally unique UIDs. Each translation unit
@@ -160,33 +162,26 @@ public:
   // internally per TU.
   int uid = 0;
 
-  // Cache for our unpacked attribute data, in this case the getAnnotation() split
-  // by the separator.
-  // TODO need  define DenseMapInfo for AssertionAttr*
-  // llvm::DenseMap<AssertionAttr*, llvm::SmallVector<StringRef,4>> annotations;
-
-  // Extract the valid AssertionAttr, if any.
-
-  template <typename T>
-  static AssertionAttr* getAssertionAttr(T* obj) {
-    AssertionAttr* attr = obj->template getAttr<AssertionAttr>();
+  /// Extract the valid AssertionAttr, if any.
+  AssertionAttr *getAssertionAttr(Decl *D) {
+    AssertionAttr* attr = D->template getAttr<AssertionAttr>();
+    if (!attr && isa<ParmVarDecl>(D)) {
+      // Retrieve it from the ParmAttrMap.
+      attr = ParmAttrMap.lookup(cast<ParmVarDecl>(D));
+    }
     return attr && IsSaneAssertionAttr(attr) ? attr : nullptr;
   }
 
-  static AssertionAttr* getAssertionAttr(Decl *D) {
-    return getAssertionAttr<Decl>(D);
-  }
-
   template <typename T>
-  static bool hasAssertionAttr(T* obj) {
-    return getAssertionAttr(obj) != nullptr;
+  bool hasAssertionAttr(Decl *D) {
+    return getAssertionAttr(D) != nullptr;
   }
 
   // To check if this Attr is in a sane state, representing a correct AssertionAttr.
   // Using it here since we're emulating on top of AnnotateAttr, and not annotations
   // are valid in our context.
   // TODO: deprecate after we implement a separate Attr.
-  static bool IsSaneAssertionAttr(const AssertionAttr* attr) {
+  static bool IsSaneAssertionAttr(const AssertionAttr *attr) {
     return attr->getAnnotation().startswith(GLOBAL_PREFIX);
   }
 
