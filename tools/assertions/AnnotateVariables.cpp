@@ -227,6 +227,34 @@ public:
     return true;
   }
 
+  struct RecordFields {
+    typedef RecordDecl::field_iterator iterator;
+    RecordDecl &RD;
+    RecordFields(RecordDecl &rd) : RD(rd) {}
+    iterator begin() { return RD.field_begin(); }
+    iterator end() { return RD.field_end(); }
+  };
+
+  bool VisitRecordDecl(RecordDecl *RD) {
+    RecordDecl *RDef = RD->getDefinition();
+    if (RDef && RDef->isStruct()) {
+      if (DEBUG) {
+        RDef->dump();
+      }
+      for (FieldDecl *FD : RecordFields(*RDef)) {
+        AssertionAttr* attr = Co.getAssertionAttr(FD);
+        if (__builtin_expect(!attr, true)) {
+          continue;
+        }
+        Co.QualifyAttrReplace(attr);
+        // TODO depends on whether pointer or not if we keep the assertion
+        // if pointer, add FD to ReferenceDecls so that it gets removed...
+
+      }
+    }
+    return true;
+  }
+
   bool VisitVarDecl(VarDecl* VD) {
     raw_ostream &e = llvm::errs();
     if (DEBUG) {
