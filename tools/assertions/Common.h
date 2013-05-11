@@ -158,7 +158,7 @@ public:
   // will have its own set of UIDs, and their mappings to the run-time
   // structures holding the asserted variables' states are maintained
   // internally per TU.
-  int uid = 1;
+  int uid = 0;
 
   // Cache for our unpacked attribute data, in this case the getAnnotation() split
   // by the separator.
@@ -171,6 +171,10 @@ public:
   static AssertionAttr* getAssertionAttr(T* obj) {
     AssertionAttr* attr = obj->template getAttr<AssertionAttr>();
     return attr && IsSaneAssertionAttr(attr) ? attr : nullptr;
+  }
+
+  static AssertionAttr* getAssertionAttr(Decl *D) {
+    return getAssertionAttr<Decl>(D);
   }
 
   template <typename T>
@@ -186,35 +190,26 @@ public:
     return attr->getAnnotation().startswith(GLOBAL_PREFIX);
   }
 
-  // Adds UID to the attribute, by replacing the original attribute object.
-  // FIXME with AddAssertionAttr removed, we don't need DS passed anymore.
-  // (that was only for the Rewriter)
-  void QualifyDeclInPlace(DeclStmt* DS, Decl* D, AssertionAttr* attr) {
-    assert(IsSaneAssertionAttr(attr) &&
-      "Tried to replace AssertionAttr for Decl which has none");
-    D->dropAttr<AssertionAttr>();
-    attr = QualifyAttrReplace(attr);
-    if (DEBUG) {
-      llvm::errs() << yellow << "Qualified: " << normal
-                   << attr->getAnnotation() << "\n";
-    }
-  }
-
   // Returns a string that represents the qualified AnnotateAttr's annotation.
   std::string GetQualifiedAttrString(AnnotateAttr* attr) {
+    if (!IsSaneAssertionAttr(attr)) {
+      llvm_unreachable("Tried to qualify bad AssertionAttr");
+    }
     // TODO also pass an ArrayRef to specify additional "parameters"
     SmallString<30> an = attr->getAnnotation();
     an.append(",");
     llvm::raw_svector_ostream S(an);
-    S << uid++;
+    S << ++uid;
     return S.str();
   }
 
-  // Qualifies an existing attr with an unique ID like QualifyAttr, but
-  // replaces the original attr in memory.
-  AssertionAttr* QualifyAttrReplace(AssertionAttr* attr) {
-    return ::new(attr) AssertionAttr(attr->getRange(), *Context,
+  /// Qualifies an existing attr with an unique ID like QualifyAttr, but
+  /// replaces the original attr in memory.
+  /// @return the UID for convenience, no point returning same address.
+  int QualifyAttrReplace(AssertionAttr* attr) {
+    (void) ::new(attr) AssertionAttr(attr->getRange(), *Context,
                                      GetQualifiedAttrString(attr));
+    return uid;
   }
 
   // Return a new AssertionAttr representing the qualified attr.
