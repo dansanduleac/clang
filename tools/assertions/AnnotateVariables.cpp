@@ -156,6 +156,9 @@ class AnnotateVariablesVisitor
   // a new assertion structure, and for pointers, that doesn't apply.
   SmallVector<VarDecl *, 20> ReferenceDecls;
 
+  typedef SmallVector<int, 2> ParmInfoList;
+  DenseMap<FunctionDecl *, ParmInfoList> FuncParmInfo;
+
   typedef Common::AssertionAttr AssertionAttr;
 
 public:
@@ -175,6 +178,17 @@ public:
       VD->dropAttr<AssertionAttr>();
     }
     ReferenceDecls.clear();
+  }
+
+  /// \brief Returns the UIDs of the parameters that are asserted pointers.
+  /// We need these in order to create new parameters in LLVM for the state of
+  /// the respective asserted variables.
+  ArrayRef<int> getParmInfoFor(FunctionDecl *FD) {
+    auto const it = FuncParmInfo.find(FD);
+    if (it != FuncParmInfo.end()) {
+      return it->second;
+    }
+    return ArrayRef<int>();
   }
 
   // Sanitise the type that we are assigning to (VD->getType()).
@@ -215,6 +229,8 @@ public:
   // -------------------------------------------------
 
   bool VisitFunctionDecl(FunctionDecl *FD) {
+    // TODO before this, annotate functions with necessary info on 
+    // FuncParmInfo
     AssertionAttr* attr = Co.getAssertionAttr(FD);
     if (attr == nullptr)
       return true;
@@ -335,24 +351,37 @@ public:
 
           // Everything's OK, qualify VD with stolen assertion.
           VD->addAttr(extractor.getAttr());
-          return true;
         }
       } // end !isParm
-      else {
+      else if (attr) {
         // state var shd be called: %assertions.state_<UID>_
         // parameters shd be called %assertions.state_<UID>_ directly
         auto *FD = dyn_cast<FunctionDecl>(VD->getDeclContext());
         assert(FD && "ParmVarDecl's DeclContext is not a FunctionDecl");
-        // Annotate the function with information regarding the asserted
-        // parameter. Also, skip creating UIDs -- last stage -- unless the
+        // TODO:
+        // Also, skip creating UIDs -- last stage -- unless the
         // function is DEFINED! (otherwise just do the FuncParmInfo
         // annotations but skip UIDs)
-        // TODO!!!
-        //FuncParmInfo[FD].append();
-       }
-       // Remember to remove VD's llvm.var.annotation either way.
-        ReferenceDecls.push_back(VD);
-    }   // end isPtr
+
+        // Annotate the function with information regarding the asserted
+        // parameter. Qualify early because we need the UID, then short
+        // circuit.
+        int uid = Co.QualifyAttrReplace(attr);
+        FuncParmInfo[FD].push_back(uid);
+        // Save the attribute in the special ParmAttrMap, then ensure
+        // that it gets marked for dropAttr (below).
+        Co.ParmAttrMap[cast<ParmVarDecl>(VD)] = attr;
+        // Explanation:
+        // If we leave it on the var, it will get codegen'd if we only delete
+        // it at the end of the translation unit, but if we delete it after
+        // finishing with the function, then we have another problem: calls to
+        // this function won't be able to know that this parameter was
+        // asserted. More at Common.h: ParmAttrMap definition.
+      }
+      // Remember to remove VD's annotation either way.
+      ReferenceDecls.push_back(VD);
+      return true;
+    } // end isPtr
 
     if (attr)
       Co.QualifyAttrReplace(attr);
@@ -361,15 +390,13 @@ public:
 
   // This is for some serious debugging, basically to show the entire Stmt
   // class hierarchy of each Stmt.
-  /*
   bool VisitStmt(Stmt* S) {
     auto &e = llvm::errs();
-    if (DEBUG) {
-      S->dump();
+    if (DEBUG >= 2) {
+      S->dumpColor();
     }
     return true;
   }
-  */
 
   /// Ensure that parameters in function calls don't lose their assertion when
   /// passed, unless explicitly requested by user.  It's forbidden for a value
@@ -459,16 +486,26 @@ public:
       // Traversing the translation unit decl via a RecursiveASTVisitor will
       // visit all nodes in the AST. This will propagate annotations across to
       // all VarDecls which should have them.
-      // Context->getTopLevelDecl()  no more!
       Visitor.TraverseDecl(D);
 
-      // Now transform the assignments, if the Decl is a function.
       // TODO can other Decls contain assignments, e.g. BlockDecl?
-      //   --> can BlockDecl appear outside functions?
+      // And then, can BlockDecl appear outside functions?
       FunctionDecl *FD;
       if (!(FD = dyn_cast<FunctionDecl>(D))) {
         continue;
       }
+      // Since all the ParmVarDecls have been visited at this point, use
+      // FuncParmInfo to annotate this function with the UIDs whose states we
+      // need to be adding additional parameters for.
+      auto UIDs = Visitor.getParmInfoFor(FD);
+      if (!UIDs.empty()) {
+        Concatenation Out;
+        Out.appendJoin("assertion.meta", "");
+        Out.appendJoin(UIDs, ",");
+        AnnotateAttr *attr = new (*Context) AnnotateAttr(
+            FD->getSourceRange(), *Context, Out.str());
+        FD->addAttr(attr);
+      } 
 
       // Decls can go like getContext() => the DeclContext* .
       //  but does decl_iterator allow changing the children?
@@ -493,18 +530,16 @@ public:
       } else {
         Co.diagnosticAt(FD, "Couldn't transform function body.",
           DiagnosticsEngine::Fatal);
+        return false;
       }
+      // Cleanup unwanted VarDecl annotations, but only AFTER the Transform
+      // has run (it depends on those to annotate the assignments).
+      Visitor.cleanup();
     }
     return true;
   }
 
   virtual void HandleTranslationUnit(clang::ASTContext &Context) {
-    // Cleanup unwanted VarDecl annotations, but only AFTER the Transform
-    // has run (it depends on those to annotate the assignments).
-    // Actually moved all the way here because we are now removing attrs from
-    // ParmVarDecl too, but we need those to persist until we finish with the
-    // TU.
-    Visitor.cleanup();
   }
 };
 
