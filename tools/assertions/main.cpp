@@ -1,4 +1,5 @@
 #include "AnnotateVariablesAction.h"
+#include "Flags.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/CommandLine.h"
@@ -35,14 +36,21 @@ using namespace assertions;
 using namespace clang;
 using namespace llvm;
 
-cl::opt<bool> Debug(
+DebugLvl DEBUG;
+
+cl::opt<DebugLvl, true> Debug(
   "d",
-  cl::desc("Print debugging information for the assertion annotating process.")
+  cl::desc("Debug the assertion annotating process"),
+  cl::values(
+    clEnumValN(DebugLvl::None, "none", "No debug info is printed"),
+    clEnumValN(DebugLvl::Basic, "basic", "Info about tool action"),
+    clEnumValN(DebugLvl::All, "all", "Also dump AST nodes"),
+    clEnumValEnd
+  ),
+  cl::location(DEBUG)
 );
 
-namespace assertions {
-  bool DEBUG = false;
-}
+
 
 // Copied from examples/clang-interpreter/main.cpp
 

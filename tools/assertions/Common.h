@@ -1,6 +1,7 @@
 #ifndef ANNOTATEVARIABLES_COMMON_H
 #define ANNOTATEVARIABLES_COMMON_H
 
+#include "Flags.h"
 #include "StringJoin.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -17,8 +18,6 @@
 namespace assertions {
 
 using namespace clang;
-
-extern bool DEBUG;
 
 struct Color {
   raw_ostream::Colors color;
