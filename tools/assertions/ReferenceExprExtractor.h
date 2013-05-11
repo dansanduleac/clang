@@ -10,8 +10,9 @@ namespace assertions {
   using namespace clang;
 
   // Use this to:
-  // * Extract any DeclRefExpr from lvalues that we assign to or that we pass
-  //   to functions, or
+  // * Extract any asserted Decl referred by the lvalues that we assign to or
+  //   that we pass to functions (found either through a DeclRefExpr or a
+  //   MemberExpr), or
   // * Extract updated DeclRefExpr, if any, in a passed UnaryExpression
   //   (e.g. "(*a)++" extracts the DRE associated with "a")
   class ReferenceExprExtractor
@@ -21,7 +22,7 @@ namespace assertions {
     // Allow visiting unary update ops too.
     bool UnaryOps;
     bool multipleAssertedDREFound = false;
-    DeclRefExpr *dre = nullptr;
+    Expr *RefExpr = nullptr;
     AssertionAttr *attr = nullptr;
 
     typedef EvaluatedExprVisitor<ReferenceExprExtractor> Base;
@@ -37,30 +38,40 @@ namespace assertions {
       return attr;
     }
 
-    DeclRefExpr *getDRE() {
+    Expr *getRefExpr() {
       run();
-      return dre;
+      return RefExpr;
     }
 
-    // Returns true if we found a DRE in "toVisit" using these visitation
-    // rules, and furthermore, that dre->getFoundDecl() is asserted.
-    // The visitation rules allow for 2 cases:
-
-    // * For  Allow only deref / addrOf operations in front of DRE
+    // Returns true if we found a DRE/MemberExpr in "toVisit" using these
+    // visitation rules, and furthermore, that referenced Decl is asserted.
     bool found() {
       run();
       return attr != nullptr;
+    }
+
+    void VisitMemberExpr(MemberExpr *ME) {
+      ValueDecl *orig = ME->getMemberDecl();
+      if ((attr = Co.getAssertionAttr(orig))) {
+        if (RefExpr != nullptr) {
+          multipleAssertedDREFound = true;
+          return;
+        }
+        RefExpr = ME;
+      }
+      // Don't visit further, we're not interesting in the record's DRE for
+      // now.
     }
 
     void VisitDeclRefExpr(DeclRefExpr *DRE) {
       NamedDecl *orig = DRE->getFoundDecl();
       //Co.warnAt(orig, "DRE referenced this object");
       if ((attr = Co.getAssertionAttr(orig))) {
-        if (dre != NULL) {
+        if (RefExpr != nullptr) {
           multipleAssertedDREFound = true;
           return;
         }
-        dre = DRE;
+        RefExpr = DRE;
 
         // Some debugging on the type...
         clang::QualType tt = DRE->getType();
@@ -114,6 +125,7 @@ namespace assertions {
       switch (S->getStmtClass()) {
         case Expr::ImplicitCastExprClass:
         case Expr::DeclRefExprClass:
+        case Expr::MemberExprClass:
         case Expr::ParenExprClass:
           break;
         case Expr::CStyleCastExprClass:
@@ -132,7 +144,7 @@ namespace assertions {
                        "found more than 1 asserted DRE inside this Expr");
         }
         toVisit = nullptr;
-        assert(!(dre == nullptr ^ attr == nullptr));
+        assert(!(RefExpr == nullptr ^ attr == nullptr));
       }
     }
 

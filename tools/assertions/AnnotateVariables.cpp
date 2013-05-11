@@ -290,14 +290,14 @@ public:
           if (attr) {
             Co.diagnosticAt(attr, "initialiser references asserted variable, "
                                   "but already has an assertion")
-              << extractor.getDRE();
+              << extractor.getRefExpr();
             return true;
           }
 
           auto query =
             IsDeeplyConstPointer(VD, "mutable pointer to asserted variable",
               [&](DiagnosticBuilder db) {
-                 db << extractor.getDRE()->getSourceRange();
+                 db << extractor.getRefExpr()->getSourceRange();
               });
           if (!query) {
             Co.diagnosticAt(extractor.getAttr(), "the variable's assertion",
