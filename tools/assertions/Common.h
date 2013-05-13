@@ -8,6 +8,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Debug.h"
 
 #include "clang/AST/AST.h"
 #include "clang/Rewrite/Core/Rewriter.h"
@@ -48,11 +49,10 @@ const llvm::StringRef GLOBAL_PREFIX = "assertion,";
 
 class Common {
   ASTContext* Context;
-  Rewriter* Rewriter;
 
 public:
-  Common(ASTContext* C, class Rewriter* Rewriter)
-    : Context(C), Rewriter(Rewriter) { }
+  Common(ASTContext* C)
+    : Context(C) { }
 
   ASTContext* getContext() { return Context; }
 

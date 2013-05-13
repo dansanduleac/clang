@@ -149,7 +149,6 @@ class AnnotateVariablesVisitor
   // We want this to change when consumer gets InitializeSema called on it.
   // Therefore, reference.
   Sema*& SemaPtr;
-  Rewriter* Rewriter;
   // Remember the asserted VarDecls that are references (pointers), because
   // we're going to come back at the end, and remove their assertion
   // attribute. We are using @llvm.var.annotation to indicate when to allocate
@@ -163,8 +162,8 @@ class AnnotateVariablesVisitor
 
 public:
   explicit AnnotateVariablesVisitor(Common& C, ASTContext* Context,
-    Sema*& SemaPtr, class Rewriter* R)
-    : Co(C), Context(Context), SemaPtr(SemaPtr), Rewriter(R) {}
+    Sema*& SemaPtr)
+    : Co(C), Context(Context), SemaPtr(SemaPtr) {}
 
   ~AnnotateVariablesVisitor() {
     // Just in case.
@@ -272,7 +271,7 @@ public:
   }
 
   bool VisitVarDecl(VarDecl* VD) {
-    raw_ostream &e = llvm::errs();
+    raw_ostream &e = llvm::dbgs();
     if (DEBUG) {
       e << yellow << "VarDecl" << normal
         << " at " << Co.printLoc(VD) << ": \""
@@ -391,7 +390,6 @@ public:
   // This is for some serious debugging, basically to show the entire Stmt
   // class hierarchy of each Stmt.
   bool VisitStmt(Stmt* S) {
-    auto &e = llvm::errs();
     if (DEBUG >= 2) {
       S->dumpColor();
     }
@@ -406,7 +404,7 @@ public:
   bool VisitCallExpr(CallExpr const *Call) {
     if (FunctionDecl const *Callee = Call->getDirectCallee()) {
       if (DEBUG) {
-        llvm::errs() << yellow << "Call to " << normal
+        llvm::dbgs() << yellow << "Call to " << normal
           << Callee->getNameAsString()
           << "\n";
       }
@@ -459,7 +457,7 @@ public:
 
 class AnnotateVariablesConsumer : public SemaConsumer {
   ASTContext* Context;
-  OwningPtr<Rewriter> Rewriter;
+  // OwningPtr<Rewriter> Rew;
   Common Co;
   Sema* SemaPtr = nullptr;
   // A RecursiveASTVisitor implementation.
@@ -467,11 +465,9 @@ class AnnotateVariablesConsumer : public SemaConsumer {
 
 public:
   // TODO: change rewriter to be a OwningPtr<Rewriter>
-  explicit AnnotateVariablesConsumer(ASTContext* Context,
-                                     class Rewriter *rewriter)
-    : SemaConsumer(), Context(Context), Rewriter(rewriter),
-      Co(Context, Rewriter.get()),
-      Visitor(Co, Context, SemaPtr, Rewriter.get()) {}
+  explicit AnnotateVariablesConsumer(ASTContext* Context)
+    : SemaConsumer(), Context(Context), Co(Context),
+      Visitor(Co, Context, SemaPtr) {}
 
   void InitializeSema(Sema &S) {
     SemaPtr = &S;
@@ -573,14 +569,15 @@ llvm::StringRef theFrontendAction(clang::frontend::ActionKind K) {
 
 ASTConsumer *AnnotateVariablesAction::CreateASTConsumer(
     CompilerInstance &CI, llvm::StringRef file) {
-  OwningPtr<Rewriter> Rew(new Rewriter());
-  Rew->setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
+  // OwningPtr<Rewriter> Rew(new Rewriter());
+  // Rew->setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
+  
   // Try to poke at ProgramAction to see what action we're doing.
   if (DEBUG) {
-    llvm::errs() << "ProgramAction = "
+    llvm::dbgs() << "ProgramAction = "
                  << theFrontendAction(CI.getFrontendOpts().ProgramAction)
                  << "\n";
-    llvm::errs() << "FrontendOptions.OutputFile = "
+    llvm::dbgs() << "FrontendOptions.OutputFile = "
                  << CI.getFrontendOpts().OutputFile
                  << "\n";
   }
@@ -590,7 +587,7 @@ ASTConsumer *AnnotateVariablesAction::CreateASTConsumer(
   // ASTPrintAction) into a MultiplexConsumer.
   llvm::SmallVector<ASTConsumer*, 2> Consumers;
   Consumers.push_back(
-    new AnnotateVariablesConsumer(&Context, Rew.take()));
+    new AnnotateVariablesConsumer(&Context));
 
   // And now the MultiplexConsumer belonging to the WrappedAction.
   Consumers.push_back(WrapperFrontendAction::CreateASTConsumer(CI, file));
