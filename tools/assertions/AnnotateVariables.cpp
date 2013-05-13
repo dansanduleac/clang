@@ -408,6 +408,10 @@ public:
           << Callee->getNameAsString()
           << "\n";
       }
+      // Build a list of UIDs we are passing, and later annotate function
+      // with them, if any.
+      SmallVector<int, 2> PassedUIDs;
+
       // Iterate through parameters passed by caller, check each against
       // type of VarDecl in Callee.
       auto cb = Call->arg_begin(), ce = Call->arg_end();
@@ -425,6 +429,7 @@ public:
         // Does the param have the same kind of attribute?
         auto parmAttr = Co.getAssertionAttr(*fb);
         auto argAttr  = extractor.getAttr();
+        // Check for mismatches :(
         if (!Co.IsSameAssertion(argAttr, parmAttr)) {
           if (argAttr && !parmAttr) {
             // FIXME
@@ -448,7 +453,15 @@ public:
               DiagnosticsEngine::Note);
           }
         }
-      
+        if (parmAttr) {
+          // Inform the Call that we are passing this UID as an parameter.
+          PassedUIDs.push_back( Co.getParsedAssertion(argAttr).UID );
+        }
+      }
+      // Annotate the assertion UIDs for which we should passing state to this
+      // function.
+      if (!PassedUIDs.empty()) {
+
       }
     }
     return true;
@@ -571,7 +584,7 @@ ASTConsumer *AnnotateVariablesAction::CreateASTConsumer(
     CompilerInstance &CI, llvm::StringRef file) {
   // OwningPtr<Rewriter> Rew(new Rewriter());
   // Rew->setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
-  
+
   // Try to poke at ProgramAction to see what action we're doing.
   if (DEBUG) {
     llvm::dbgs() << "ProgramAction = "
