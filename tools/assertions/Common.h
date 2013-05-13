@@ -139,9 +139,8 @@ public:
   }
 
 
-  // -------------------------------------------------
-  // THE ATTRIBUTE
-  // -------------------------------------------------
+// === Assertion related stuff =================================
+
   // TODO:
   // Update these to actually use a custom attribute, not just AnnotateAttr,
   // because this is quite inflexible. That would require modifying the
@@ -155,6 +154,20 @@ public:
   // we need to initialize state.
   llvm::DenseMap<ParmVarDecl *, AssertionAttr *> ParmAttrMap;
 
+  struct Assertion {
+    StringRef Kind; // e.g. "monotonic"
+    SmallVector<StringRef, 2> Params; // random(1, 2, 3)
+    int UID;
+
+    bool isCompatible(Assertion &A) {
+      return Kind == A.Kind &&
+             Params == A.Params;
+    }
+  };
+
+private:
+  llvm::DenseMap<AssertionAttr*, Assertion> ParsedAssertions;
+
   // There will be a different Visitor for each translation unit, but that's
   // ok because we do not need globally unique UIDs. Each translation unit
   // will have its own set of UIDs, and their mappings to the run-time
@@ -162,6 +175,7 @@ public:
   // internally per TU.
   int uid = 0;
 
+public:
   /// Extract the valid AssertionAttr, if any.
   AssertionAttr *getAssertionAttr(Decl *D) {
     AssertionAttr* attr = D->template getAttr<AssertionAttr>();
@@ -214,23 +228,56 @@ public:
                                       GetQualifiedAttrString(attr));
   }
 
-  static bool IsSameAssertion(AssertionAttr* a1, AssertionAttr* a2) {
+  bool IsSameAssertion(AssertionAttr* a1, AssertionAttr* a2) {
     if (a1 == nullptr || a2 == nullptr) {
       return a1 == nullptr && a2 == nullptr;
     }
-    SmallVector<StringRef, 3> Arr1, Arr2;
-    // Only compare the first 2 elements of each.
-    // TODO modify this for assertions which can take parameters
-    a1->getAnnotation().split(Arr1, ",", 2); Arr1.resize(2);
-    a2->getAnnotation().split(Arr2, ",", 2); Arr2.resize(2);
-    return Arr1 == Arr2;
+    Assertion &pa1 = getParsedAssertion(a1),
+              &pa2 = getParsedAssertion(a2);
+    return pa1.isCompatible(pa2);
   }
 
-  static StringRef AssertionKindAsString(AssertionAttr* attr) {
-    SmallVector<StringRef, 3> Arr;
-    attr->getAnnotation().split(Arr, ",", 2);
-    assert(Arr[0] == "assertion" && "Not an assertion attribute");
-    return Arr[1];
+  Assertion &getParsedAssertion(AssertionAttr *attr) {
+    if (!ParsedAssertions.count(attr)) {
+      auto pair = ParsedAssertions.insert(
+        std::make_pair(attr, ParseAssertion(attr)));
+      assert(pair.second);
+      return pair.first->second;
+    } else
+      return ParsedAssertions[attr];
+  }
+
+  StringRef AssertionKindAsString(AssertionAttr* attr) {
+    return getParsedAssertion(attr).Kind;
+  }
+
+private:
+  static Assertion ParseAssertion(AssertionAttr *attr) {
+    assert(attr->getAnnotation().startswith(GLOBAL_PREFIX));
+    Assertion Ret;
+    StringRef anno = attr->getAnnotation();
+
+    size_t paramStart = anno.find('(');
+    if (paramStart != StringRef::npos) {
+      size_t paramEnd = anno.rfind(')');
+      anno.slice(paramStart+1, paramEnd).split(Ret.Params, ",");
+      Ret.Kind = anno.slice( anno.find(',')+1, paramStart );
+      if (anno.size() > paramEnd+1) {
+        assert(anno[paramEnd+1] == ',');
+        anno.slice(paramEnd+2, anno.size()).getAsInteger(10, Ret.UID);
+      } else
+        Ret.UID = -1;
+    } else {
+      SmallVector<StringRef, 3> Arr;
+      anno.split(Arr, ",");
+      Ret.Kind = Arr[1];
+      if (Arr.size() > 2) {
+        Arr[2].getAsInteger(10, Ret.UID);
+      } else
+        Ret.UID = -1;
+      assert(Arr.size() < 4);
+    }
+    return Ret;
   }
 };
 
