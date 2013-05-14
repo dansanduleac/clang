@@ -205,16 +205,14 @@ public:
         break;
       }
       case Expr::CallExprClass:
-        // Also allow function calls, because we might want to tag a function
-        // call, to check the tracked variables that were passed afterwards.
+        // Also allow function calls, because we want to tag a function call
+        // with the UIDs of asserted parameters we're passing.
+
         break;
     }
-    // TODO add a intrinsics function that we can actually take this value
-    // as a parameter.
     Value *V = Visit(AE->getSubExpr());
-    // TODO this doesn't always work, if !isSimple() for instnace.. how to
-    // treat the other cases???
-    Value *LV = LHS.getAddress();
+    auto PtrToNull = llvm::ConstantPointerNull::get(CGF.CGM.Int8PtrTy);
+    Value *LV = LHS.isSimple() ? LHS.getAddress() : PtrToNull;
     if (!LV) {
       // If we don't have an address (it's a CallExpr), just put a null value
       // instead.
