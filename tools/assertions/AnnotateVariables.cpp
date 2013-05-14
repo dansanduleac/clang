@@ -136,11 +136,94 @@ public:
     return Transformed;
   }
 
-  // TODO Also check function calls that pass asserted variables, and call
-  // TransformAssertedAssignment on them too.
+  /// Ensure that parameters in function calls don't lose their assertion when
+  /// passed, unless explicitly requested by user.  It's forbidden for a value
+  /// to become asserted inside the function when it is passed by address.
+  /// That would make it ambiguous whether to allocate a control structure or
+  /// not: yes for regular value, but no for already-asserted value.
+  ExprResult TransformCallExpr(CallExpr *Call) {
+    ExprResult Transformed = Base::TransformCallExpr(Call);
+    assert(!Transformed.isInvalid() && "Couldn't transform CallExpr");
+    Call = cast<CallExpr>(Transformed.get());
+
+    if (FunctionDecl *Callee = Call->getDirectCallee()) {
+      if (DEBUG) {
+        llvm::dbgs() << yellow << "Call to " << normal
+          << Callee->getNameAsString()
+          << "\n";
+      }
+      // Build a list of UIDs we are passing, and later annotate function
+      // with them, if any.
+      SmallVector<int, 2> PassedUIDs;
+
+      // Iterate through parameters passed by caller, check each against
+      // type of VarDecl in Callee.
+      auto cb = Call->arg_begin(), ce = Call->arg_end();
+      auto fb = Callee->param_begin(), fe = Callee->param_end();
+      for (; cb != ce; ++cb, ++fb) {
+        assert(fb != fe &&
+          "Ran out of function parameters, please treat varargs?");
+        // Only run this analysis if the ParmVarDecl is a pointer-type.
+        bool isPtrParm = isa<PointerType>((*fb)->getType().getTypePtr());
+        if (!isPtrParm) {
+          continue;
+        }
+        ReferenceExprExtractor extractor(Co, *cb);
+        extractor.run();
+        // Does the param have the same kind of attribute?
+        auto parmAttr = Co.getAssertionAttr(*fb);
+        auto argAttr  = extractor.getAttr();
+        // Check for mismatches :(
+        if (!Co.IsSameAssertion(argAttr, parmAttr)) {
+          if (argAttr && !parmAttr) {
+            // FIXME
+            // DUBIOUS, how do we get around this in a straightforward manner?
+            // By annotating the TYPES themselves in VarDecl.
+            Co.warnAt(*cb, "dropping assertion on function call, use a cast "
+                           "to silence")
+              << FixItHint::CreateInsertion((*cb)->getLocStart(),
+                   "("+ (*fb)->getType().getAsString() +")");
+            continue;
+          }
+          Co.diagnosticAt(*cb, "argument's assertion (%1) doesn't match "
+            "that of parameter '%0' (%2)")
+            << (*fb)->getName()
+            << (argAttr ? "'" + Twine(Co.AssertionKindAsString(argAttr)) + "'"
+                        : "none").str()
+            << (parmAttr ? "'" + Twine(Co.AssertionKindAsString(parmAttr)) + "'"
+                        : "none").str();
+          if (parmAttr) {
+            Co.diagnosticAt(parmAttr, "parameter's assertion",
+              DiagnosticsEngine::Note);
+          }
+        }
+        if (parmAttr) {
+          // Inform the Call that we are passing this UID as an parameter.
+          PassedUIDs.push_back( Co.getParsedAssertion(argAttr).UID );
+        }
+      }
+      // Annotate the assertion UIDs for which we should passing state to this
+      // function.
+      if (!PassedUIDs.empty()) {
+        if (DEBUG) {
+          Co.warnAt(Call, "will be transformed");
+        }
+        Concatenation C;
+        C.appendJoin("assertion.funcall", "");
+        C.appendJoin(PassedUIDs, ",");
+        const clang::Attr* attrs[] = {
+          new (getSema().Context) AnnotateAttr(Call->getSourceRange(),
+            getSema().Context, C.str())
+        };
+        return RebuildAttributedExpr(
+          Call->getExprLoc(), attrs, Call);
+      }
+    }
+    return Transformed;
+  }
 };
 
-
+// === VISITOR ===============================
 
 class AnnotateVariablesVisitor
   : public RecursiveASTVisitor<AnnotateVariablesVisitor> {
@@ -392,77 +475,6 @@ public:
   bool VisitStmt(Stmt* S) {
     if (DEBUG >= 2) {
       S->dumpColor();
-    }
-    return true;
-  }
-
-  /// Ensure that parameters in function calls don't lose their assertion when
-  /// passed, unless explicitly requested by user.  It's forbidden for a value
-  /// to become asserted inside the function when it is passed by address.
-  /// That would make it ambiguous whether to allocate a control structure or
-  /// not: yes for regular value, but no for already-asserted value.
-  bool VisitCallExpr(CallExpr const *Call) {
-    if (FunctionDecl const *Callee = Call->getDirectCallee()) {
-      if (DEBUG) {
-        llvm::dbgs() << yellow << "Call to " << normal
-          << Callee->getNameAsString()
-          << "\n";
-      }
-      // Build a list of UIDs we are passing, and later annotate function
-      // with them, if any.
-      SmallVector<int, 2> PassedUIDs;
-
-      // Iterate through parameters passed by caller, check each against
-      // type of VarDecl in Callee.
-      auto cb = Call->arg_begin(), ce = Call->arg_end();
-      auto fb = Callee->param_begin(), fe = Callee->param_end();
-      for (; cb != ce; ++cb, ++fb) {
-        assert(fb != fe &&
-          "Ran out of function parameters, please treat varargs?");
-        // Only run this analysis if the ParmVarDecl is a pointer-type.
-        bool isPtrParm = isa<PointerType>((*fb)->getType().getTypePtr());
-        if (!isPtrParm) {
-          continue;
-        }
-        auto extractor = ExtractAssertedDRE(const_cast<Expr*>(*cb));
-        extractor.run();
-        // Does the param have the same kind of attribute?
-        auto parmAttr = Co.getAssertionAttr(*fb);
-        auto argAttr  = extractor.getAttr();
-        // Check for mismatches :(
-        if (!Co.IsSameAssertion(argAttr, parmAttr)) {
-          if (argAttr && !parmAttr) {
-            // FIXME
-            // DUBIOUS, how do we get around this in a straightforward manner?
-            // By annotating the TYPES themselves in VarDecl.
-            Co.warnAt(*cb, "dropping assertion on function call, use a cast "
-                           "to silence")
-              << FixItHint::CreateInsertion((*cb)->getLocStart(),
-                   "("+ (*fb)->getType().getAsString() +")");
-            continue;
-          }
-          Co.diagnosticAt(*cb, "argument's assertion (%1) doesn't match "
-            "that of parameter '%0' (%2)")
-            << (*fb)->getName()
-            << (argAttr ? "'" + Twine(Co.AssertionKindAsString(argAttr)) + "'"
-                        : "none").str()
-            << (parmAttr ? "'" + Twine(Co.AssertionKindAsString(parmAttr)) + "'"
-                        : "none").str();
-          if (parmAttr) {
-            Co.diagnosticAt(parmAttr, "parameter's assertion",
-              DiagnosticsEngine::Note);
-          }
-        }
-        if (parmAttr) {
-          // Inform the Call that we are passing this UID as an parameter.
-          PassedUIDs.push_back( Co.getParsedAssertion(argAttr).UID );
-        }
-      }
-      // Annotate the assertion UIDs for which we should passing state to this
-      // function.
-      if (!PassedUIDs.empty()) {
-
-      }
     }
     return true;
   }
