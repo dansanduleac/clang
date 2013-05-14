@@ -6,9 +6,10 @@
 // This is in "${CLANG_SOURCE_DIR}/lib", mind you.
 #include "Sema/TreeTransform.h"
 
+#include "AnnotateVariablesAction.h"
 #include "Common.h"
 #include "ReferenceExprExtractor.h"
-#include "AnnotateVariablesAction.h"
+#include "StringJoin.h"
 
 #include <memory>
 

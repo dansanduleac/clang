@@ -2,7 +2,6 @@
 #define ANNOTATEVARIABLES_COMMON_H
 
 #include "Flags.h"
-#include "StringJoin.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -11,7 +10,6 @@
 #include "llvm/Support/Debug.h"
 
 #include "clang/AST/AST.h"
-#include "clang/Rewrite/Core/Rewriter.h"
 
 #include <new>
 #include <sstream>
@@ -138,7 +136,7 @@ public:
     return D.Report(csr.getBegin(), DiagID) << csr;
   }
 
-
+  
 // === Assertion related stuff =================================
 
   // TODO:
@@ -253,9 +251,9 @@ public:
 
 private:
   static Assertion ParseAssertion(AssertionAttr *attr) {
-    assert(attr->getAnnotation().startswith(GLOBAL_PREFIX));
-    Assertion Ret;
     StringRef anno = attr->getAnnotation();
+    assert(anno.startswith(GLOBAL_PREFIX));
+    Assertion Ret;
 
     size_t paramStart = anno.find('(');
     if (paramStart != StringRef::npos) {
