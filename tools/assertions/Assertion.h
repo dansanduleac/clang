@@ -1,8 +1,16 @@
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/Support/ErrorHandling.h"
+
+namespace clang {
+  class AnnotateAttr;
+  class Decl;
+}
 
 namespace assertions {
+
+using namespace llvm;
 
 struct Assertion {
   StringRef Kind; // e.g. "monotonic"
@@ -15,7 +23,7 @@ struct Assertion {
   }
 };
 
-typedef AnnotateAttr AssertionAttr;
+typedef clang::AnnotateAttr AssertionAttr;
 
 const llvm::StringRef GLOBAL_PREFIX = "assertion,";
 
@@ -27,79 +35,30 @@ class AssertionManager {
 
 private:
   // Cache for parsed annotations.
-  llvm::DenseMap<AssertionAttr*, Assertion> ParsedAssertions;
-
-
-  // There will be a different Visitor for each translation unit, but that's
-  // ok because we do not need globally unique UIDs. Each translation unit
-  // will have its own set of UIDs, and their mappings to the run-time
-  // structures holding the asserted variables' states are maintained
-  // internally per TU.
-  int uid = 0;
+  llvm::StringMap<Assertion> ParsedAssertions;
 
 public:
-  int getUID() {
-    return uid;
+  static bool IsSaneAssertion(StringRef attr) {
+    return attr.startswith(GLOBAL_PREFIX);
   }
 
-  /// Extract the valid AssertionAttr, if any.
-  AssertionAttr *getAssertionAttr(Decl *D) {
-    AssertionAttr* attr = D->template getAttr<AssertionAttr>();
-    return attr && IsSaneAssertionAttr(attr) ? attr : nullptr;
-  }
-
-  template <typename T>
-  bool hasAssertionAttr(Decl *D) {
-    return getAssertionAttr(D) != nullptr;
-  }
-
-  // To check if this Attr is in a sane state, representing a correct AssertionAttr.
-  // Using it here since we're emulating on top of AnnotateAttr, and not annotations
-  // are valid in our context.
-  // TODO: deprecate after we implement a separate Attr.
-  static bool IsSaneAssertionAttr(const AssertionAttr *attr) {
-    return attr->getAnnotation().startswith(GLOBAL_PREFIX);
-  }
-
-  // Returns a string that represents the qualified AnnotateAttr's annotation.
-  std::string GetQualifiedAttrString(AnnotateAttr* attr) {
-    if (!IsSaneAssertionAttr(attr)) {
-      llvm_unreachable("Tried to qualify bad AssertionAttr");
-    }
-    // TODO also pass an ArrayRef to specify additional "parameters"
-    SmallString<30> an = attr->getAnnotation();
-    an.append(",");
-    llvm::raw_svector_ostream S(an);
-    S << ++uid;
-    return S.str();
-  }
-
-  bool IsSameAssertion(AssertionAttr* a1, AssertionAttr* a2) {
-    if (a1 == nullptr || a2 == nullptr) {
-      return a1 == nullptr && a2 == nullptr;
-    }
+  bool SameAssertion(StringRef a1, StringRef a2) {
     Assertion &pa1 = getParsedAssertion(a1),
               &pa2 = getParsedAssertion(a2);
     return pa1.isCompatible(pa2);
   }
 
-  Assertion &getParsedAssertion(AssertionAttr *attr) {
-    if (!ParsedAssertions.count(attr)) {
-      auto pair = ParsedAssertions.insert(
-        std::make_pair(attr, ParseAssertion(attr)));
-      assert(pair.second);
-      return pair.first->second;
+  Assertion &getParsedAssertion(StringRef anno) {
+    if (!ParsedAssertions.count(anno)) {
+      auto &Entry =
+        ParsedAssertions.GetOrCreateValue(anno, ParseAssertion(anno));
+      return Entry.getValue();
     } else
-      return ParsedAssertions[attr];
-  }
-
-  StringRef AssertionKindAsString(AssertionAttr* attr) {
-    return getParsedAssertion(attr).Kind;
+      return ParsedAssertions[anno];
   }
 
 private:
-  static Assertion ParseAssertion(AssertionAttr *attr) {
-    StringRef anno = attr->getAnnotation();
+  static Assertion ParseAssertion(StringRef anno) {
     assert(anno.startswith(GLOBAL_PREFIX));
     Assertion Ret;
 
@@ -116,12 +75,13 @@ private:
     } else {
       SmallVector<StringRef, 3> Arr;
       anno.split(Arr, ",");
+      assert(Arr.size() < 4 && "Too many fields in assertion, max 3");
       Ret.Kind = Arr[1];
       if (Arr.size() > 2) {
-        Arr[2].getAsInteger(10, Ret.UID);
+        if (Arr[2].getAsInteger(10, Ret.UID))
+          llvm_unreachable("Can't parse UID");
       } else
         Ret.UID = -1;
-      assert(Arr.size() < 4);
     }
     return Ret;
   }
