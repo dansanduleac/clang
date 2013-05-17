@@ -383,9 +383,9 @@ public:
       }
     }
 
+    Expr *Init = VD->getInit();
+    bool isParm = isa<ParmVarDecl>(VD);
     if (isPtr) {
-      Expr *Init = VD->getInit();
-      bool isParm = isa<ParmVarDecl>(VD);
       // When it's a normal pointer (not a function parameter), don't allow
       // manually specifying an assertion on it. The only case this would be
       // useful would be to hint to the compiler that the value at a certain
@@ -407,12 +407,12 @@ public:
       // If we're a pointer in a block of code (i.e. in a DeclStmt), deal with
       // initialisation ("assertion stealing").
       if (!isParm) {
-        // Since it's a const, it can't possibly not have an init (in C).
         // TODO what if inside a structure though? The init will be somewhere else.
-        assert(Init);
         auto extractor = ExtractAssertedDRE(Init);
 
         if (extractor.found()) {
+          // Since it's a const, it can't possibly not have an init (in C).
+          assert(Init && "How does this const pointer not have an init?");
           // Raise an error if we found a reference to another assertion,
           // but we already have an AssertionAttr on our back.
           // This behaviour might change in the future.
@@ -465,8 +465,11 @@ public:
       // Remember to remove VD's annotation either way.
       ReferenceDecls.push_back(VD);
       return true;
-    } // end isPtr
-
+    } else if (!isParm && attr && !Init) { // end isPtr
+      // Enforce that non-parameter value, if asserted, must be initialised.
+      Co.diagnosticAt(VD, "asserted value must be initialised");
+      return true;
+    }
     if (attr)
       Co.QualifyAttrReplace(attr);
     return true;
