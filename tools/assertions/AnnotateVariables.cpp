@@ -175,7 +175,7 @@ public:
         auto parmAttr = Co.getAssertionAttr(*fb);
         auto argAttr  = extractor.getAttr();
         // Check for mismatches :(
-        if (!Co.AM.IsSameAssertion(argAttr, parmAttr)) {
+        if (!Co.SameAssertion(argAttr, parmAttr)) {
           if (argAttr && !parmAttr) {
             // FIXME
             // DUBIOUS, how do we get around this in a straightforward manner?
@@ -189,9 +189,9 @@ public:
           Co.diagnosticAt(*cb, "argument's assertion (%1) doesn't match "
             "that of parameter '%0' (%2)")
             << (*fb)->getName()
-            << (argAttr ? "'" + Twine(Co.AM.AssertionKindAsString(argAttr)) + "'"
+            << (argAttr ? "'" + Twine(Co.AssertionKindAsString(argAttr)) + "'"
                         : "none").str()
-            << (parmAttr ? "'" + Twine(Co.AM.AssertionKindAsString(parmAttr)) + "'"
+            << (parmAttr ? "'" + Twine(Co.AssertionKindAsString(parmAttr)) + "'"
                         : "none").str();
           if (parmAttr) {
             Co.diagnosticAt(parmAttr, "parameter's assertion",
@@ -200,7 +200,7 @@ public:
         }
         if (parmAttr) {
           // Inform the Call that we are passing this UID as an parameter.
-          PassedUIDs.push_back( Co.AM.getParsedAssertion(argAttr).UID );
+          PassedUIDs.push_back( Co.getParsedAssertion(argAttr).UID );
         }
       }
       // Annotate the assertion UIDs for which we should passing state to this

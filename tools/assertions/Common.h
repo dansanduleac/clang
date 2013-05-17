@@ -8,6 +8,7 @@
 #include "llvm/Support/Debug.h"
 
 #include "clang/AST/AST.h"
+#include "clang/AST/Attr.h"
 
 #include <new>
 #include <sstream>
@@ -132,8 +133,18 @@ public:
     return D.Report(csr.getBegin(), DiagID) << csr;
   }
 
+
 // === Assertion related stuff =================================
 
+private:
+  // There will be a different Visitor for each translation unit, but that's
+  // ok because we do not need globally unique UIDs. Each translation unit
+  // will have its own set of UIDs, and their mappings to the run-time
+  // structures holding the asserted variables' states are maintained
+  // internally per TU.
+  int uid = 0;
+
+public:
   // Map holding the function parameter assertions for pointer params. We
   // don't want to allow them to remain attached to the ParmVarDecls because
   // then they get codegen'd, and we only want to codegen annotations where
@@ -144,12 +155,17 @@ public:
 
   /// Extract the valid AssertionAttr, if any.
   AssertionAttr *getAssertionAttr(Decl *D) {
-    auto attr = AM.getAssertionAttr(D);
+    AssertionAttr* attr = D->template getAttr<AssertionAttr>();
     if (!attr && isa<ParmVarDecl>(D)) {
       // Retrieve it from the ParmAttrMap.
       attr = ParmAttrMap.lookup(cast<ParmVarDecl>(D));
     }
-    return attr;
+    return attr && IsSaneAssertionAttr(attr) ? attr : nullptr;
+  }
+
+  template <typename T>
+  bool hasAssertionAttr(clang::Decl *D) {
+    return getAssertionAttr(D) != nullptr;
   }
 
   /// Qualifies an existing attr with an unique ID like QualifyAttr, but
@@ -157,16 +173,54 @@ public:
   /// @return the UID for convenience, no point returning same address.
   int QualifyAttrReplace(AssertionAttr* attr) {
     (void) ::new(attr) AssertionAttr(attr->getRange(), *Context,
-                                     AM.GetQualifiedAttrString(attr));
-    return AM.getUID();
+                                     GetQualifiedAttrString(attr));
+    return uid;
   }
 
   // Return a new AssertionAttr representing the qualified attr.
   // Does NOT check whether attr already qualified, or not sane.
   AssertionAttr* QualifyAttr(AssertionAttr* attr) {
     return new(*Context) AnnotateAttr(attr->getRange(), *Context,
-                                      AM.GetQualifiedAttrString(attr));
+                                      GetQualifiedAttrString(attr));
   }
+
+  StringRef AssertionKindAsString(AssertionAttr* attr) {
+    return AM.getParsedAssertion(attr->getAnnotation()).Kind;
+  }
+
+  bool SameAssertion(AssertionAttr* a1, AssertionAttr* a2) {
+    if (a1 == nullptr || a2 == nullptr) {
+      return a1 == nullptr && a2 == nullptr;
+    }
+    return AM.SameAssertion(a1->getAnnotation(),
+                            a2->getAnnotation());
+  }
+
+  Assertion &getParsedAssertion(AssertionAttr *attr) {
+    return AM.getParsedAssertion(attr->getAnnotation());
+  }
+
+  // To check if this Attr is in a sane state, representing a correct AssertionAttr.
+  // Using it here since we're emulating on top of AnnotateAttr, and not annotations
+  // are valid in our context.
+  // TODO: deprecate after we implement a separate Attr.
+  static bool IsSaneAssertionAttr(const AssertionAttr *attr) {
+    return AssertionManager::IsSaneAssertion(attr->getAnnotation());
+  }
+
+  // Returns a string that represents the qualified AnnotateAttr's annotation.
+  std::string GetQualifiedAttrString(AssertionAttr* attr) {
+    if (!IsSaneAssertionAttr(attr)) {
+      llvm_unreachable("Tried to qualify bad AssertionAttr");
+    }
+    // TODO also pass an ArrayRef to specify additional "parameters"
+    SmallString<30> an = attr->getAnnotation();
+    an.append(",");
+    llvm::raw_svector_ostream S(an);
+    S << ++uid;
+    return S.str();
+  }
+
 };
 
 }
