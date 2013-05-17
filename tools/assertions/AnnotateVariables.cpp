@@ -1,3 +1,8 @@
+#include "AnnotateVariablesAction.h"
+#include "Common.h"
+#include "ReferenceExprExtractor.h"
+#include "StringJoin.h"
+
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
@@ -6,10 +11,6 @@
 // This is in "${CLANG_SOURCE_DIR}/lib", mind you.
 #include "Sema/TreeTransform.h"
 
-#include "AnnotateVariablesAction.h"
-#include "Common.h"
-#include "ReferenceExprExtractor.h"
-#include "StringJoin.h"
 
 #include <memory>
 
