@@ -190,6 +190,11 @@ public:
     switch (SE->getStmtClass()) {
       default:
         llvm_unreachable("AttributedExpr wraps incompatible Expr");
+      case Expr::CompoundAssignOperatorClass: {
+        CompoundAssignOperator *cao = cast<CompoundAssignOperator>(SE);
+        LHS = EmitCheckedLValue(cao->getLHS(), CodeGenFunction::TCK_Store);
+        break;
+      }
       case Expr::BinaryOperatorClass: {
         BinaryOperator *bo = cast<BinaryOperator>(SE);
         if (bo->isAssignmentOp()) {
