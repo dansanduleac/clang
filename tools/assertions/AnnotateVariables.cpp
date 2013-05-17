@@ -242,7 +242,8 @@ class AnnotateVariablesVisitor
   // a new assertion structure, and for pointers, that doesn't apply.
   SmallVector<VarDecl *, 20> ReferenceDecls;
 
-  typedef SmallVector<int, 2> ParmInfoList;
+  typedef std::pair<StringRef, int> KindUidPair;
+  typedef SmallVector<KindUidPair, 2> ParmInfoList;
   DenseMap<FunctionDecl *, ParmInfoList> FuncParmInfo;
 
 public:
@@ -264,15 +265,15 @@ public:
     ReferenceDecls.clear();
   }
 
-  /// \brief Returns the UIDs of the parameters that are asserted pointers.
-  /// We need these in order to create new parameters in LLVM for the state of
-  /// the respective asserted variables.
-  ArrayRef<int> getParmInfoFor(FunctionDecl *FD) {
+  /// \brief Returns the Assertion kinds and UIDs of the parameters that are
+  /// asserted pointers. We need these in order to create new parameters in
+  /// LLVM for the state of the respective asserted variables.
+  ArrayRef<KindUidPair> getParmInfoFor(FunctionDecl *FD) {
     auto const it = FuncParmInfo.find(FD);
     if (it != FuncParmInfo.end()) {
       return it->second;
     }
-    return ArrayRef<int>();
+    return ArrayRef<KindUidPair>();
   }
 
   // Sanitise the type that we are assigning to (VD->getType()).
@@ -449,7 +450,8 @@ public:
         // parameter. Qualify early because we need the UID, then short
         // circuit.
         int uid = Co.QualifyAttrReplace(attr);
-        FuncParmInfo[FD].push_back(uid);
+        StringRef Kind = Co.getParsedAssertion(attr).Kind;
+        FuncParmInfo[FD].push_back( std::make_pair(Kind, uid) );
         // Save the attribute in the special ParmAttrMap, then ensure
         // that it gets marked for dropAttr (below).
         Co.ParmAttrMap[cast<ParmVarDecl>(VD)] = attr;
@@ -517,11 +519,15 @@ public:
       // Since all the ParmVarDecls have been visited at this point, use
       // FuncParmInfo to annotate this function with the UIDs whose states we
       // need to be adding additional parameters for.
-      auto UIDs = Visitor.getParmInfoFor(FD);
-      if (!UIDs.empty()) {
-        Concatenation Out;
-        Out.appendJoin("assertion.meta", "");
-        Out.appendJoin(UIDs, ",");
+      auto Kind_UID_pairs = Visitor.getParmInfoFor(FD);
+      if (!Kind_UID_pairs.empty()) {
+        Concatenation Out(",");
+        Out.append("assertion.meta");
+        // Kind, UID  alternation
+        for (auto &p : Kind_UID_pairs) {
+          Out.append(p.first);
+          Out.append(p.second);
+        }
         AnnotateAttr *attr = new (*Context) AnnotateAttr(
             FD->getSourceRange(), *Context, Out.str());
         FD->addAttr(attr);
