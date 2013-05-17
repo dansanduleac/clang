@@ -225,7 +225,9 @@ public:
   }
 };
 
-// === VISITOR ===============================
+//===--------------------------------------------------------------------===//
+//                            Visitor
+//===--------------------------------------------------------------------===//
 
 class AnnotateVariablesVisitor
   : public RecursiveASTVisitor<AnnotateVariablesVisitor> {
@@ -436,8 +438,6 @@ public:
         }
       } // end !isParm
       else if (attr) {
-        // state var shd be called: %assertions.state_<UID>_
-        // parameters shd be called %assertions.state_<UID>_ directly
         auto *FD = dyn_cast<FunctionDecl>(VD->getDeclContext());
         assert(FD && "ParmVarDecl's DeclContext is not a FunctionDecl");
         // TODO:
@@ -563,44 +563,12 @@ public:
   }
 };
 
-// Taken from ExecuteCompilerInvocation.cpp for debugging.
-llvm::StringRef theFrontendAction(clang::frontend::ActionKind K) {
-  using namespace clang::frontend;
-  switch (K) {
-    case ASTDump:                 return "ASTDump";
-    case ASTDumpXML:              return "ASTDumpXML";
-    case ASTPrint:                return "ASTPrint";
-    case ASTView:                 return "ASTView";
-    case DumpRawTokens:           return "DumpRawTokens";
-    case DumpTokens:              return "DumpTokens";
-    case EmitAssembly:            return "EmitAssembly";
-    case EmitBC:                  return "EmitBC";
-    case EmitHTML:                return "EmitHTML";
-    case EmitLLVM:                return "EmitLLVM";
-    case EmitLLVMOnly:            return "EmitLLVMOnly";
-    case EmitCodeGenOnly:         return "EmitCodeGenOnly";
-    case EmitObj:                 return "EmitObj";
-    case FixIt:                   return "FixIt";
-    case GenerateModule:          return "GenerateModule";
-    case GeneratePCH:             return "GeneratePCH";
-    case GeneratePTH:             return "GeneratePTH";
-    case InitOnly:                return "InitOnly";
-    case ParseSyntaxOnly:         return "ParseSyntaxOnly";
-    case PluginAction:            return "PluginAction";
-  }
-  return "<<UNKNOWN>>";
-}
-
 ASTConsumer *AnnotateVariablesAction::CreateASTConsumer(
     CompilerInstance &CI, llvm::StringRef file) {
   // OwningPtr<Rewriter> Rew(new Rewriter());
   // Rew->setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
 
-  // Try to poke at ProgramAction to see what action we're doing.
   if (DEBUG) {
-    llvm::dbgs() << "ProgramAction = "
-                 << theFrontendAction(CI.getFrontendOpts().ProgramAction)
-                 << "\n";
     llvm::dbgs() << "FrontendOptions.OutputFile = "
                  << CI.getFrontendOpts().OutputFile
                  << "\n";
