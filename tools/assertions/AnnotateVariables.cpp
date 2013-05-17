@@ -198,8 +198,8 @@ public:
             Co.diagnosticAt(parmAttr, "parameter's assertion",
               DiagnosticsEngine::Note);
           }
-        }
-        if (parmAttr) {
+          continue;
+        } else if (parmAttr) {
           // Inform the Call that we are passing this UID as an parameter.
           PassedUIDs.push_back( Co.getParsedAssertion(argAttr).UID );
         }
