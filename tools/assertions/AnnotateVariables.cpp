@@ -210,9 +210,9 @@ public:
         if (DEBUG) {
           Co.warnAt(Call, "will be transformed");
         }
-        Concatenation C;
-        C.appendJoin("assertion.funcall", "");
-        C.appendJoin(PassedUIDs, ",");
+        Concatenation C(",");
+        C.append("assertion.funcall");
+        C.append(PassedUIDs);
         const clang::Attr* attrs[] = {
           new (getSema().Context) AnnotateAttr(Call->getSourceRange(),
             getSema().Context, C.str())
