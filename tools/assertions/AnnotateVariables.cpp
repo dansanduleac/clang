@@ -516,9 +516,10 @@ public:
       // TODO can other Decls contain assignments, e.g. BlockDecl?
       // And then, can BlockDecl appear outside functions?
       FunctionDecl *FD;
-      if (!(FD = dyn_cast<FunctionDecl>(D))) {
+      if (!(FD = dyn_cast<FunctionDecl>(D)))
         continue;
-      }
+      if (!FD->hasBody())
+        continue;
       // Since all the ParmVarDecls have been visited at this point, use
       // FuncParmInfo to annotate this function with the UIDs whose states we
       // need to be adding additional parameters for.
