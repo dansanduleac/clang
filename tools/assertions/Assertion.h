@@ -1,3 +1,6 @@
+#ifndef ANNOTATEVARIABLES_ASSERTION_H
+#define ANNOTATEVARIABLES_ASSERTION_H
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/SmallString.h"
@@ -88,3 +91,5 @@ private:
 };
 
 }
+
+#endif
